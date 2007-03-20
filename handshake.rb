@@ -72,60 +72,35 @@ module Handshake
     end
   end
 
-  # Define method and invariant contracts on a class.  Invariant and method
-  # contracts are conditions that are checked before and/or after the
-  # execution of each method in the class.  They are inherited by subclasses
-  # and are applied to all superclass methods.
+  # Defines class methods for contracts.  All methods accept an optional method
+  # name to assign the contract to as their first argument.  If none is given, 
+  # contract will be assigned to the next added method.
   #
-  # == Specifying an invariant
+  # Argument contracts:
+  #   contract [ accepted, arguments ] => [ returned, arguments ]
+  # Varargs specified with nested lists.  If single argument or return value,
+  # brackets may be omitted.  Block specified as Block, final argument only.
+  # Don't yet support block/proc contracts.
   #
-  # Invariants are specified with a block and an optional message string:
+  # Contract-checked accessors:
+  #   contract_reader :foo => String, :bar => Integer
+  #   contract_writer ...
+  #   contract_accessor ...
+  # Defines contract-checked accessors.  Method names and clauses are specified
+  # in a hash.
   #
-  #   invariant("Cannot be empty") { not empty ? }
+  # Invariants: 
+  #   invariant(optional_message) { returns true }
+  # Aliased as 'always'.  Has access to instance variables and methods of class
+  # but calls to same are unchecked.
   #
-  # You may specify as many invariants as you wish and they will each be
-  # checked before and after the execution of each method.
-  #
-  # == Specifying a method contract
-  #
-  # Method contracts allow you to set constraints on the arguments accepted
-  # by a method and its return value(s).  Any object which defines a
-  # <tt>===</tt> method may be specified as a constraint.  In the class of
-  # classes, this is equivalent to is_a?:
-  #
-  #   String === "foo" <=> "foo".is_a? String
-  #
-  # Other examples of classes with useful predefined <tt>===</tt> methods
-  # include Regexp and Range.
-  #
-  # The syntax for defining a method contract is as follows:
-  #
-  #   method :foo, :accepts => [ String, Integer ], :returns => [ String ]
-  #
-  # The first symbol, :foo, may be omitted.  In this case the method contract
-  # will be applied to the next method definition following the contract.
-  #
-  #   method :accepts => [ String ]
-  #   def foo(str)
-  #     ...
-  #   end
-  #
-  # Variable arguments may be enclosed in brackets as an array.  Blocks
-  # should be specified using the Contract::Block object.
-  #
-  #   method :accepts => [ String, [ Integer ], Contract::Block ]
-  #
-  # == Order of execution
-  #
-  # The order of execution for contract checking is as follows:
-  #
-  # * the invariants are checked
-  # * the method arguments are checked against its :accepts contract, if any
-  # * the method itself is executed
-  # * the method's return value(s) are checked against its :returns contract,
-  #   if any
-  # * the invariants are checked yet again
-  #
+  # Pre/post-conditions:
+  #   before(optional_message) { |all, args| returns true }
+  #   after(optional_message)  { |all, args, returned| returns true }
+  #   around(optional_message) { |all, args| returns true }
+  # Before and after aliased as 'requires' and 'ensure' respectively.  Around
+  # currently throws a warning post-invocation.  Same scope rules as
+  # invariants.
   module ClassMethods
     # Specify an invariant, with a block and an optional error message.
     def invariant(mesg=nil, &block)
@@ -134,6 +109,9 @@ module Handshake
     end
     alias :always :invariant
     
+    # Specify an argument contract, with argument clauses on one side of the
+    # hash arrow and returned values on the other.  Each clause must implement
+    # the === method or have been created with the assert method.
     def contract(meth_or_hash, contract_hash=nil)
       if meth_or_hash.is_a? Hash
         defer :contract, meth_or_hash
@@ -142,53 +120,25 @@ module Handshake
       end
     end
 
-    def define_contract(method, contract_hash)
-      raise ArgumentError unless contract_hash.length == 1
-      accepts, returns = [ contract_hash.keys.first, contract_hash.values.first ].map {|v| arrayify v}
-      contract_for(method).accepts = accepts
-      contract_for(method).returns = returns
-    end
-
+    # Specify a precondition.
     def before(meth_or_mesg=nil, mesg=nil, &block)
       condition(:before, meth_or_mesg, mesg, &block)
     end
     alias :requires :before
 
+    # Specify a postcondition.
     def after(meth_or_mesg=nil, mesg=nil, &block)
       condition(:after, meth_or_mesg, mesg, &block)
     end
     alias :ensures :after
 
+    # Specify a bothcondition.
     def around(meth_or_mesg=nil, mesg=nil, &block)
       condition(:around, meth_or_mesg, mesg, &block)
     end
 
-    def condition(type, meth_or_mesg=nil, mesg=nil, &block)
-      method_specified = meth_or_mesg.is_a?(Symbol)
-      message = method_specified ? mesg : meth_or_mesg
-      condition = MethodCondition.new(message, &block)
-      if method_specified
-        define_condition(meth_or_mesg, condition)
-      else
-        defer :condition, { type => condition }
-      end
-    end
-
-    def define_condition(method, type, condition)
-      defined_before = [ :before, :around ].include? type
-      defined_after  = [ :after,  :around ].include? type
-      contract_for(method).preconditions << condition if defined_before
-      contract_for(method).postconditions << condition if defined_after
-    end
-
-    def arrayify(value_or_array)
-      value_or_array.is_a?(Array) ? value_or_array : [ value_or_array ]
-    end
-
-    def defer(type, value)
-      ( @deferred ||= {} )[type] = value
-    end
-
+    # Returns the MethodContract for the given method name. Side effect:
+    # creates one if none defined.
     def contract_for(method)
       if contract_defined?(method)
         method_contracts[method]
@@ -199,10 +149,14 @@ module Handshake
       end
     end
 
+    # Returns true if a contract is defined for the named method.
     def contract_defined?(method)
       method_contracts.has_key?(method)
     end
 
+    # Defines contract-checked attribute readers with the given hash of method
+    # name to clause.
+    def contract_writer(meth_to_clause)
     def contract_reader(meth_to_clause)
       attr_reader *(meth_to_clause.keys)
       meth_to_clause.each do |meth, cls|
@@ -210,6 +164,8 @@ module Handshake
       end
     end
 
+    # Defines contract-checked attribute writers with the given hash of method
+    # name to clause.
     def contract_writer(meth_to_clause)
       attr_writer *(meth_to_clause.keys)
       meth_to_clause.each do |meth, cls|
@@ -217,6 +173,8 @@ module Handshake
       end
     end
 
+    # Defines contract-checked attribute accessors for the given hash of method
+    # name to clause.
     def contract_accessor(meth_to_clause)
       contract_reader meth_to_clause
       contract_writer meth_to_clause
@@ -237,9 +195,47 @@ module Handshake
         @deferred.clear
       end
     end
+
+    private
+
+    def define_contract(method, contract_hash)
+      raise ArgumentError unless contract_hash.length == 1
+      accepts, returns = [ contract_hash.keys.first, contract_hash.values.first ].map {|v| arrayify v}
+      contract_for(method).accepts = accepts
+      contract_for(method).returns = returns
+    end
+
+    def define_condition(method, type, condition)
+      defined_before = [ :before, :around ].include? type
+      defined_after  = [ :after,  :around ].include? type
+      contract_for(method).preconditions << condition if defined_before
+      contract_for(method).postconditions << condition if defined_after
+    end
+
+    def condition(type, meth_or_mesg=nil, mesg=nil, &block)
+      method_specified = meth_or_mesg.is_a?(Symbol)
+      message = method_specified ? mesg : meth_or_mesg
+      condition = MethodCondition.new(message, &block)
+      if method_specified
+        define_condition(meth_or_mesg, condition)
+      else
+        defer :condition, { type => condition }
+      end
+    end
+
+    def arrayify(value_or_array)
+      value_or_array.is_a?(Array) ? value_or_array : [ value_or_array ]
+    end
+
+    def defer(type, value)
+      ( @deferred ||= {} )[type] = value
+    end
+
   end
 
   module InstanceMethods
+    # Checks the invariants of this object, raising a ContractViolation if any
+    # fail.
     def check_invariants!
       self.class.invariants.each do |invar|
         unless invar.holds?(self)
@@ -250,6 +246,7 @@ module Handshake
     end
   end
 
+  # Class representing method contracts.  Not for external use.
   class MethodContract
     attr_accessor :preconditions, :postconditions, :returns
     attr_reader :accepts
@@ -278,9 +275,6 @@ module Handshake
         o.class.instance_eval do
           define_method(:bound_condition_passes?, &(condition.block))
         end
-        #arity = o.method(:bound_condition_passes?).arity
-        #puts "method is #{@method_name}, arity is #{arity}, args length is #{args.length}"
-        #args = args.slice(0, arity) if arity > 0 && args.length > arity
         passes = o.bound_condition_passes?(*args)
         o.class.send(:remove_method, :bound_condition_passes?)
         raise ContractViolation, condition.message unless passes
@@ -338,6 +332,7 @@ module Handshake
     end
   end
 
+  # Specifies a condition on a method.  Not for external use.
   class MethodCondition
     attr_accessor :message, :block
     def initialize(message=nil, &block)
@@ -346,7 +341,7 @@ module Handshake
   end
 
   # This class defines a class invariant, which has a block and an optional
-  # method.
+  # method.  Not for external use.
   class Invariant
     def initialize(mesg=nil, &block)
       @mesg = mesg
