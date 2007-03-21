@@ -21,7 +21,7 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 require 'inheritable_attributes'
-require 'test/unit'
+require 'test/unit/assertions'
 
 class Class
   # Redefines each of the given methods as a call to self#send.  This assumes
@@ -44,8 +44,7 @@ module Handshake
   def Handshake.included(base)
     base.extend(ClassMethods)
     base.extend(ClauseMethods)
-    #base.extend(Test::Unit::Assertions)
-    base.send(:include, Test::Unit::Assertions)
+    base.extend(Test::Unit::Assertions)
     base.send(:include, Handshake::InstanceMethods)
 
     base.class_inheritable_array :invariants
@@ -59,6 +58,9 @@ module Handshake
       # Override the class-level new method of every class that includes
       # Contract and cause it to return a proxy object for the original.
       def new(*args, &block)
+        if @non_instantiable
+          raise ContractError, "This class has been marked as abstract and cannot be instantiated."
+        end
         # Special case:  check invariants for constructor.
         if contract_defined? :initialize
           begin
@@ -105,6 +107,12 @@ module Handshake
   # currently throws a warning post-invocation.  Same scope rules as
   # invariants.
   module ClassMethods
+    # Define this class as non-instantiable.  Subclasses do not inherit this
+    # attribute.
+    def abstract!
+      @non_instantiable = true
+    end
+
     # Specify an invariant, with a block and an optional error message.
     def invariant(mesg=nil, &block)
       write_inheritable_array(:invariants, [ Invariant.new(mesg, &block) ] )
