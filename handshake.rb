@@ -533,6 +533,16 @@ module Handshake
       end
       all? *respond_assertions
     end
+    
+    # Allows you to check whether the argument is_a? of the given symbol.
+    # For example, is_a?(:String).  Useful for situations where you want
+    # to check for a class type that hasn't been defined yet when you write
+    # the contract but will have been by the time the code runs.
+    def is_a?(class_symbol)
+      clause("is a #{class_symbol}") { |o|
+        Object.const_defined?(class_symbol) && o.is_a?(Object.const_get(class_symbol))
+      }
+    end
   end
 end
 
