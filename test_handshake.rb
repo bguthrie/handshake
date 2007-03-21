@@ -206,24 +206,23 @@ class TestContract < Test::Unit::TestCase
 
   class AcceptsSimpleAssertion
     include Handshake
-    equals_foo  = assert {|o| o == "foo"}
-    equals_foo2 = Clause.new {|o| o == "foo"}
-    contract [ equals_foo, equals_foo2 ] => anything
-    def call(foo, foo2)
-      return foo, foo2
+    equals_foo  = clause {|o| o == "foo"}
+    contract [ equals_foo ] => anything
+    def call(foo)
+      return foo
     end
   end
 
   def test_method_simple_assertion
     assert_violation { AcceptsSimpleAssertion.new.call }
+    assert_violation { AcceptsSimpleAssertion.new.call 3 }
     assert_violation { AcceptsSimpleAssertion.new.call "bar", "bar" }
-    assert_violation { AcceptsSimpleAssertion.new.call "foo" }
-    assert_passes    { AcceptsSimpleAssertion.new.call "foo", "foo" }
+    assert_passes    { AcceptsSimpleAssertion.new.call "foo" }
   end
 
   class AcceptsAll
     include Handshake
-    equals_five = assert {|o| o == 5}
+    equals_five = clause {|o| o == 5}
     contract all?(Integer, equals_five) => anything
     def initialize(n); end
   end
@@ -237,8 +236,8 @@ class TestContract < Test::Unit::TestCase
 
   class AcceptsAny
     include Handshake
-    equals_five = assert {|o| o == 5}
-    equals_three = assert {|o| o == 3}
+    equals_five = clause {|o| o == 5}
+    equals_three = clause {|o| o == 3}
     contract any?(equals_five, equals_three) => anything
     def three_or_five(n); end
     contract any?(String, Integer, Symbol) => anything
@@ -432,5 +431,22 @@ class TestContract < Test::Unit::TestCase
     assert_passes    { ContractAccessor.new.baz = :baz }
     assert_passes    { ContractAccessor.new.qux = 3.3 }
   end
+
+  class BeforeClauseAssert
+    include Handshake
+    
+    before do |arg|
+      assert_equal "foo", arg, "arg must equal foo"
+    end; def call(arg)
+      arg
+    end
+  end
+
+  def test_before_clause_assert
+    assert_raise(Test::Unit::AssertionFailedError) { BeforeClauseAssert.new.call 3 }
+    assert_raise(Test::Unit::AssertionFailedError) { BeforeClauseAssert.new.call "bar" }
+    assert_passes { BeforeClauseAssert.new.call "foo" }
+  end
+
 
 end

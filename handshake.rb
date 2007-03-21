@@ -21,6 +21,7 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 require 'inheritable_attributes'
+require 'test/unit'
 
 class Class
   # Redefines each of the given methods as a call to self#send.  This assumes
@@ -43,6 +44,8 @@ module Handshake
   def Handshake.included(base)
     base.extend(ClassMethods)
     base.extend(ClauseMethods)
+    #base.extend(Test::Unit::Assertions)
+    base.send(:include, Test::Unit::Assertions)
     base.send(:include, Handshake::InstanceMethods)
 
     base.class_inheritable_array :invariants
@@ -156,7 +159,6 @@ module Handshake
 
     # Defines contract-checked attribute readers with the given hash of method
     # name to clause.
-    def contract_writer(meth_to_clause)
     def contract_reader(meth_to_clause)
       attr_reader *(meth_to_clause.keys)
       meth_to_clause.each do |meth, cls|
@@ -439,13 +441,13 @@ module Handshake
   # A collection of methods for defining constraints on method arguments.
   module ClauseMethods
     # Passes if the given block returns true when passed the argument.
-    def assert(mesg=nil, &block)
+    def clause(mesg=nil, &block)
       Clause.new(mesg, &block)
     end
     
     # Passes if the subclause does not pass on the argument.
     def not?(clause)
-      assert("not #{clause.inspect}") { |o| not ( clause === o ) }
+      clause("not #{clause.inspect}") { |o| not ( clause === o ) }
     end
     
     # Always passes.
@@ -455,24 +457,24 @@ module Handshake
 
     # Passes if argument is true or false.
     def boolean?
-      assert("true or false") { |o| ( o == true ) || ( o == false ) }
+      clause("true or false") { |o| ( o == true ) || ( o == false ) }
     end
 
     # Passes if any of the subclauses pass on the argument.
     def any?(*clauses)
-      assert("any of #{clauses.inspect}") { |o| clauses.any? {|c| c === o} }
+      clause("any of #{clauses.inspect}") { |o| clauses.any? {|c| c === o} }
     end
     alias :or? :any?
     
     # Passes only if all of the subclauses pass on the argument.
     def all?(*clauses)
-      assert("all of #{clauses.inspect}") { |o| clauses.all? {|c| c === o} }
+      clause("all of #{clauses.inspect}") { |o| clauses.all? {|c| c === o} }
     end
     alias :and? :all?
     
     # Passes if argument is numeric and nonzero.
     def nonzero?
-      all? Numeric, assert("nonzero") {|o| o != 0}
+      all? Numeric, clause("nonzero") {|o| o != 0}
     end
 
     # Passes if argument is Enumerable and the subclause passes on all of 
@@ -485,7 +487,7 @@ module Handshake
     # its objects, mapped over the given block.
     def many_with_map?(clause, mesg=nil, &block)
       map_mesg = ( mesg.nil? ? "" : " after map #{mesg}" )
-      many_with_map = assert("many of #{clause.inspect}#{map_mesg}") do |o|
+      many_with_map = clause("many of #{clause.inspect}#{map_mesg}") do |o|
         o.map(&block).all? { |p| clause === p }
       end
       all? Enumerable, many_with_map
@@ -502,7 +504,7 @@ module Handshake
     # Passes only if argument is a hash and does not contain any keys except
     # those given.
     def hash_with_keys(*keys)
-      key_assertion = assert("contains keys #{keys.inspect}") do |o|
+      key_assertion = clause("contains keys #{keys.inspect}") do |o|
         ( o.keys - keys ).empty?
       end
       all? Hash, key_assertion
@@ -517,7 +519,7 @@ module Handshake
     #   in the argument hash
     def hash_contract(hash)
       value_assertions = hash.keys.map do |k|
-        assert("key #{k} requires #{hash[k].inspect}") do |o|
+        clause("key #{k} requires #{hash[k].inspect}") do |o|
           o.has_key?(k) ? hash[k] === o[k] : true
         end
       end
@@ -527,7 +529,7 @@ module Handshake
     # Passes if argument responds to all of the given methods.
     def responds_to?(*methods)
       respond_assertions = methods.map do |m| 
-        assert("responds to #{m}") { |o| o.respond_to? m }
+        clause("responds to #{m}") { |o| o.respond_to? m }
       end
       all? *respond_assertions
     end
