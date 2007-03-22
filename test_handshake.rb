@@ -353,6 +353,18 @@ class TestContract < Test::Unit::TestCase
     assert_passes    { AcceptsRespondsTo.new([]) }
   end
 
+  class AcceptsIsA
+    include Handshake
+    contract is?(:String) => is?(:Symbol)
+    def call_is_a(str); p str.intern; return str.intern; end
+  end
+
+  def test_accepts_is_string_symbol
+    assert_violation { AcceptsIsA.new.call_is_a(3) }
+    assert_violation { AcceptsIsA.new.call_is_a(:foo) }
+    assert_passes    { AcceptsIsA.new.call_is_a("foo") }
+  end
+
   class SimpleBeforeCondition
     include Handshake
     before { assert false }

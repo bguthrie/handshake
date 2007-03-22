@@ -334,6 +334,7 @@ module Handshake
     end
 
     def check_returns!(*args)
+      puts "checking returns; method is #{@method_name}, accepts is #{@accepts.inspect}, returns is #{@returns.inspect}"
       @returns.each_with_index do |expected, i|
         check_equivalence!(args[i], expected)
       end
@@ -345,6 +346,7 @@ module Handshake
 
     def check_equivalence!(given, expected)
       unless expected === given
+        puts "checking equivalence; method = #{@method_name}, given = #{given.inspect}, expected = #{expected.inspect}"
         exc = ContractViolation.new("Contract violated in call to method " +
           "#{@method_name}; expected #{expected.inspect}, received #{given.inspect}")
         throw :contract, exc
@@ -420,11 +422,10 @@ module Handshake
         
         # make actual call
         return_val = @proxied.send meth_name, *args, &block
-        return_val = [ return_val ] unless return_val.is_a? Array
         
         # after
-        contract.check_returns! *(args + return_val)
-        contract.check_post! @proxied, *(args + return_val)
+        contract.check_returns! return_val
+        contract.check_post! @proxied, *(args << return_val)
         @proxied.check_invariants!
       end
       raise violation if violation.is_a?(Exception)
@@ -560,6 +561,10 @@ module Handshake
       clause("is a #{class_symbol}") { |o|
         Object.const_defined?(class_symbol) && o.is_a?(Object.const_get(class_symbol))
       }
+    end
+
+    def decompose(*clauses)
+
     end
   end
 
