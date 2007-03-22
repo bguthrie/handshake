@@ -103,12 +103,13 @@ module Handshake
   # but calls to same are unchecked.
   #
   # Pre/post-conditions:
-  #   before(optional_message) { |all, args| returns true }
-  #   after(optional_message)  { |all, args, returned| returns true }
-  #   around(optional_message) { |all, args| returns true }
+  #   before(optional_message) { |all, args| assert condition }
+  #   after(optional_message)  { |all, args, returned| assert condition }
+  #   around(optional_message) { |all, args| assert condition }
   # Before and after aliased as 'requires' and 'ensure' respectively.  Around
   # currently throws a warning post-invocation.  Same scope rules as
-  # invariants.
+  # invariants.  before and after have all Test::Unit::Assertions available
+  # for their use.
   module ClassMethods
     # Define this class as non-instantiable.  Subclasses do not inherit this
     # attribute.
@@ -230,7 +231,7 @@ module Handshake
       message = method_specified ? mesg : meth_or_mesg
       condition = MethodCondition.new(message, &block)
       if method_specified
-        define_condition(meth_or_mesg, condition)
+        define_condition(type, meth_or_mesg, condition)
       else
         defer :condition, { type => condition }
       end
@@ -303,7 +304,6 @@ module Handshake
       # If the last argument is a Block, handle it as a special case.  We
       # do this to ensure that there's no conflict with any real arguments
       # which may accept Procs.
-      args = [ args ] unless args.is_a? Array
       @block = args.pop if args.last == Block
 
       if args.find_all {|o| o.is_a? Array}.length > 1
@@ -556,7 +556,7 @@ module Handshake
     # For example, is_a?(:String).  Useful for situations where you want
     # to check for a class type that hasn't been defined yet when you write
     # the contract but will have been by the time the code runs.
-    def is_a?(class_symbol)
+    def is?(class_symbol)
       clause("is a #{class_symbol}") { |o|
         Object.const_defined?(class_symbol) && o.is_a?(Object.const_get(class_symbol))
       }
