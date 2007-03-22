@@ -101,6 +101,12 @@ class TestContract < Test::Unit::TestCase
     def str=(str); @str = str; end
   end
   class ExtendsAcceptsString < AcceptsString; end
+  class AcceptsIntegerInstead < AcceptsString
+    contract :initialize, Integer => anything
+  end
+  class AcceptsSymbolInstead < AcceptsString
+    contract :initialize, Symbol => anything
+  end
 
   def test_method_accepts
     assert_violation { AcceptsString.new 3 }
@@ -111,6 +117,11 @@ class TestContract < Test::Unit::TestCase
     assert_violation { ExtendsAcceptsString.new :foo }
     assert_passes    { ExtendsAcceptsString.new "string" }
     assert_violation { ExtendsAcceptsString.new("foo").str = 3 }
+    assert_violation { AcceptsIntegerInstead.new("foo") }
+    assert_passes    { AcceptsIntegerInstead.new 3 }
+    assert_violation { AcceptsSymbolInstead.new "foo" }
+    assert_violation { AcceptsSymbolInstead.new 3 }
+    assert_passes    { AcceptsSymbolInstead.new :foo }
   end
 
   class ReturnsString
