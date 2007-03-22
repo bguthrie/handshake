@@ -338,7 +338,6 @@ module Handshake
     end
 
     def check_returns!(*args)
-      puts "checking returns; method is #{@method_name}, accepts is #{@accepts.inspect}, returns is #{@returns.inspect}"
       @returns.each_with_index do |expected, i|
         check_equivalence!(args[i], expected)
       end
@@ -350,7 +349,6 @@ module Handshake
 
     def check_equivalence!(given, expected)
       unless expected === given
-        puts "checking equivalence; method = #{@method_name}, given = #{given.inspect}, expected = #{expected.inspect}"
         exc = ContractViolation.new("Contract violated in call to method " +
           "#{@method_name}; expected #{expected.inspect}, received #{given.inspect}")
         throw :contract, exc
