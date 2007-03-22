@@ -355,7 +355,7 @@ class TestContract < Test::Unit::TestCase
 
   class SimpleBeforeCondition
     include Handshake
-    before { false }
+    before { assert false }
     def call_fails; end
     def call_passes; end
   end
@@ -374,7 +374,7 @@ class TestContract < Test::Unit::TestCase
 
   class SimpleAfterCondition
     include Handshake
-    after { |accepted, returned| returned }
+    after { |accepted, returned| assert returned }
     def call(bool); bool; end
   end
 
@@ -389,7 +389,7 @@ class TestContract < Test::Unit::TestCase
 
   class SimpleAroundCondition
     include Handshake
-    around {|arg| not arg}
+    around {|arg| assert(!arg) }
     def call(bool); bool; end
   end
 
@@ -402,7 +402,7 @@ class TestContract < Test::Unit::TestCase
   class ScopedBeforeCondition
     include Handshake
     def initialize(bool); @bool = bool; end
-    before { @bool }
+    before { assert @bool }
     def call; end
   end
 
@@ -436,17 +436,15 @@ class TestContract < Test::Unit::TestCase
     include Handshake
     
     before do |arg|
-      assert_equal "foo", arg, "arg must equal foo"
+      assert_equal("foo", arg, "arg must equal foo")
     end; def call(arg)
       arg
     end
   end
 
   def test_before_clause_assert
-    assert_raise(Test::Unit::AssertionFailedError) { BeforeClauseAssert.new.call 3 }
-    assert_raise(Test::Unit::AssertionFailedError) { BeforeClauseAssert.new.call "bar" }
-    assert_passes { BeforeClauseAssert.new.call "foo" }
+    assert_violation { BeforeClauseAssert.new.call 3 }
+    assert_violation { BeforeClauseAssert.new.call "bar" }
+    assert_passes    { BeforeClauseAssert.new.call "foo" }
   end
-
-
 end

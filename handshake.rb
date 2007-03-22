@@ -44,7 +44,8 @@ module Handshake
   def Handshake.included(base)
     base.extend(ClassMethods)
     base.extend(ClauseMethods)
-    base.extend(Test::Unit::Assertions)
+    #base.extend(Test::Unit::Assertions)
+    base.send(:include, Test::Unit::Assertions)
     base.send(:include, Handshake::InstanceMethods)
 
     base.class_inheritable_array :invariants
@@ -285,9 +286,14 @@ module Handshake
         o.class.instance_eval do
           define_method(:bound_condition_passes?, &(condition.block))
         end
-        passes = o.bound_condition_passes?(*args)
+        begin
+          o.bound_condition_passes?(*args)
+        rescue Test::Unit::AssertionFailedError => afe
+          throw :contract, AssertionFailed.new(afe.message)
+        rescue Exception => e
+          throw :contract, e
+        end
         o.class.send(:remove_method, :bound_condition_passes?)
-        raise ContractViolation, condition.message unless passes
       end
     end
 
@@ -295,6 +301,7 @@ module Handshake
       # If the last argument is a Block, handle it as a special case.  We
       # do this to ensure that there's no conflict with any real arguments
       # which may accept Procs.
+      args = [ args ] unless args.is_a? Array
       @block = args.pop if args.last == Block
 
       if args.find_all {|o| o.is_a? Array}.length > 1
@@ -399,7 +406,8 @@ module Handshake
     # contract filter.
     def send(meth_name, *args, &block)
       contract = @proxied.class.contract_for(meth_name)
-      begin
+      return_val = nil
+      violation = catch :contract do |exc|
         # before
         @proxied.check_invariants!
         contract.check_accepts! *args, &block
@@ -413,12 +421,9 @@ module Handshake
         contract.check_returns! *(args + return_val)
         contract.check_post! @proxied, *(args + return_val)
         @proxied.check_invariants!
-
-        return_val
-      rescue Exception => e
-        # Reraise in the local context for a more useful stack trace.
-        raise e.class, e.message
       end
+      raise violation if violation.is_a?(Exception)
+      return return_val
     end
     alias :method_missing :send
 
@@ -552,19 +557,18 @@ module Handshake
       }
     end
   end
+
+  class ContractViolation < RuntimeError; end
+  class AssertionFailed   < ContractViolation; end
+  class ContractError     < RuntimeError; end
 end
 
-class ContractViolation < RuntimeError
-end
-
-class ContractError < RuntimeError
-end
 
 module Test
   module Unit
     module Assertions
       def assert_violation(&block)
-        assert_raise(ContractViolation, &block)
+        assert_raise(Handshake::ContractViolation, Handshake::AssertionFailed, &block)
       end
     
       def assert_passes(&block)
