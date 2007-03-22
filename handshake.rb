@@ -62,17 +62,19 @@ module Handshake
         if @non_instantiable
           raise ContractError, "This class has been marked as abstract and cannot be instantiated."
         end
-        # Special case:  check invariants for constructor.
-        if contract_defined? :initialize
-          begin
-            method_contracts[:initialize].check_accepts!(*args, &block)
-          rescue Exception => e
-            raise e.class, e.message
-          end
-        end
+        o = nil
 
-        o = self.instantiate(*args, &block)
-        o.check_invariants!
+        violation = catch :contract do
+          # Special case:  check invariants for constructor.
+          if contract_defined? :initialize
+            method_contracts[:initialize].check_accepts!(*args, &block)
+          end
+
+          o = self.instantiate(*args, &block)
+          o.check_invariants!
+        end
+        raise violation if violation.is_a?(Exception)
+        raise ContractError, "Could not instantiate object" if o.nil?
         Proxy.new( o )
       end
     end
@@ -251,7 +253,7 @@ module Handshake
       self.class.invariants.each do |invar|
         unless invar.holds?(self)
           mesg = invar.mesg || "Invariant check failed"
-          raise ContractViolation, mesg
+          throw :contract, ContractViolation.new(mesg)
         end
       end
     end
@@ -343,8 +345,9 @@ module Handshake
 
     def check_equivalence!(given, expected)
       unless expected === given
-        raise ContractViolation, "Contract violated in call to method " +
-          "#{@method_name}; expected #{expected.inspect}, received #{given.inspect}"
+        exc = ContractViolation.new("Contract violated in call to method " +
+          "#{@method_name}; expected #{expected.inspect}, received #{given.inspect}")
+        throw :contract, exc
       end
     end
   end
@@ -407,6 +410,8 @@ module Handshake
     def send(meth_name, *args, &block)
       contract = @proxied.class.contract_for(meth_name)
       return_val = nil
+      # Use throw/catch rather than raise/rescue in order to pull exceptions
+      # once and only once from within the stack trace.
       violation = catch :contract do |exc|
         # before
         @proxied.check_invariants!
@@ -551,11 +556,11 @@ module Handshake
     # For example, is_a?(:String).  Useful for situations where you want
     # to check for a class type that hasn't been defined yet when you write
     # the contract but will have been by the time the code runs.
-    def is_a?(class_symbol)
-      clause("is a #{class_symbol}") { |o|
-        Object.const_defined?(class_symbol) && o.is_a?(Object.const_get(class_symbol))
-      }
-    end
+    # def is_a?(class_symbol)
+    #   clause("is a #{class_symbol}") { |o|
+    #     Object.const_defined?(class_symbol) && o.is_a?(Object.const_get(class_symbol))
+    #   }
+    # end
   end
 
   class ContractViolation < RuntimeError; end
@@ -577,3 +582,10 @@ module Test
     end
   end
 end
+
+class Foo
+  include Handshake
+  contract String => anything
+  def initialize(str); @str = str; end
+end
+
