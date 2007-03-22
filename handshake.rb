@@ -60,7 +60,7 @@ module Handshake
       # Contract and cause it to return a proxy object for the original.
       def new(*args, &block)
         if @non_instantiable
-          raise ContractError, "This class has been marked as abstract and cannot be instantiated."
+          raise ContractViolation, "This class has been marked as abstract and cannot be instantiated."
         end
         o = nil
 
