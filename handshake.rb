@@ -215,15 +215,19 @@ module Handshake
     def define_contract(method, contract_hash)
       raise ArgumentError unless contract_hash.length == 1
       accepts, returns = [ contract_hash.keys.first, contract_hash.values.first ].map {|v| arrayify v}
-      contract_for(method).accepts = accepts
-      contract_for(method).returns = returns
+      contract = contract_for(method).dup
+      contract.accepts = accepts
+      contract.returns = returns
+      write_inheritable_hash :method_contracts, { method => contract }
     end
 
     def define_condition(method, type, condition)
       defined_before = [ :before, :around ].include? type
       defined_after  = [ :after,  :around ].include? type
-      contract_for(method).preconditions << condition if defined_before
-      contract_for(method).postconditions << condition if defined_after
+      contract = contract_for(method).dup
+      contract.preconditions << condition if defined_before
+      contract.postconditions << condition if defined_after
+      write_inheritable_hash :method_contracts, { method => contract }
     end
 
     def condition(type, meth_or_mesg=nil, mesg=nil, &block)
@@ -563,8 +567,9 @@ module Handshake
       }
     end
 
+    # Checks each item in the array sequentially.
     def decompose(*clauses)
-
+      
     end
   end
 
