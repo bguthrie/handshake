@@ -123,6 +123,10 @@ module Handshake
       nil
     end
     alias :always :invariant
+
+    def ===(other)
+      other.is_a? self
+    end
     
     # Specify an argument contract, with argument clauses on one side of the
     # hash arrow and returned values on the other.  Each clause must implement
@@ -387,7 +391,7 @@ module Handshake
   # like its proxied object for all intents and purposes, although it notably
   # does not proxy __id__, __send__, or class.
   class Proxy
-    NOT_PROXIED  = [ "__id__", "__send__", "class" ]
+    NOT_PROXIED  = [ "__id__", "__send__" ]
     SELF_PROXIED = Object.instance_methods - NOT_PROXIED
 
     proxy_self *SELF_PROXIED
@@ -597,3 +601,16 @@ class Foo
   def initialize(str); @str = str; end
 end
 
+  class Superclass
+    include Handshake
+    contract Superclass => boolean?
+    def ==(other); self.class === other; end
+  end
+
+  class Subclass < Superclass; end
+
+  class AcceptsSuperAndSub
+    include Handshake
+    contract Superclass => anything
+    def call(cls); cls; end
+  end

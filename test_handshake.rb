@@ -470,4 +470,25 @@ class TestContract < Test::Unit::TestCase
     assert_violation { BeforeClauseAssert.new.call "bar" }
     assert_passes    { BeforeClauseAssert.new.call "foo" }
   end
+
+  class Superclass
+    include Handshake
+    contract Superclass => boolean?
+    def ==(other); self.class === other; end
+  end
+
+  class Subclass < Superclass; end
+
+  class AcceptsSuperAndSub
+    include Handshake
+    contract Superclass => anything
+    def call(cls); cls; end
+  end
+
+  def test_accepts_super_and_sub
+    assert_violation { AcceptsSuperAndSub.new.call 3 }
+    assert_passes    { AcceptsSuperAndSub.new.call Superclass.new }
+    assert_passes    { AcceptsSuperAndSub.new.call Subclass.new }
+    assert_passes    { Superclass.new == Subclass.new }
+  end
 end
