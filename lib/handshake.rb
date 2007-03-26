@@ -23,7 +23,7 @@
 require 'inheritable_attributes'
 require 'test/unit/assertions'
 
-class Class
+class Class # :nodoc:
   # Redefines each of the given methods as a call to self#send.  This assumes
   # that self#send knows what do with them.
   def proxy_self(*meths)
@@ -42,7 +42,7 @@ end
 # programming).  To use it in your code, include this module in a class.
 # Note that when you do so, that class's +new+ method will be replaced.
 # There are three different types of contracts you can specify on a class.
-# See Contract::ClassMethods for more documentation.
+# See Handshake::ClassMethods for more documentation.
 module Handshake
 
   # Catches any thrown :contract exception raised within the given block, 
@@ -117,38 +117,43 @@ module Handshake
   # invariants and override other existing contracts by redefining them.
   #
   # ===Method signature contracts
-  #   contract SomeClass => SomeOtherClass
-  #   contract [ Multiple, Classes, [ Varargs ], Block ] => [ Multiple, Returns ]
+  #   contract String => Integer
+  #   contract [ String, 1..5, [ Integer ], Block ] => [ String, String ]
   #   contract clause("must equal 'foo'") { |o| o == "foo" } => anything
-  # Varargs specified with nested lists.  If single argument or return value,
-  # brackets may be omitted.  Block specified as Block, final argument only.
-  # Don't yet support block/proc contracts.
   #
-  # A clause here is defined as any object that implements the +===+ method.
-  # This means that +String+, <tt>/foo|bar/<tt>, and <tt>1..5<tt> are all 
-  # valid arguments to a method signature contract.  See 
-  # Handshake::ClauseMethods for a variety of type combinators and utility
-  # methods.  Note that custom clauses can be created easily with the 
-  # Handshake::ClauseMethods#clause method.
+  # A method signature contract is defined as a mapping from valid inputs to 
+  # to valid outputs.  A clause here is any object which implements the
+  # <tt>===</tt> method.  Classes, ranges, regexes, and other useful objects
+  # are thus all valid values for a method signature contract.
+  #
+  # Multiple arguments are specified as an array.  To specify that a method
+  # accepts varargs, define a nested array as the last or second-to-last
+  # item in the array.  To specify that a method accepts a block, place
+  # the Block constant as the last item in the array.  Expect this to change
+  # in the future to allow for block contracts.
+  #
+  # New clauses may be created easily with the Handshake::ClauseMethods#clause
+  # method.  Handshake::ClauseMethods also provides a number of useful contract
+  # combinators for specifying rich input and output contracts.
   #
   # ===Contract-checked accessors
   #   contract_reader :foo => String, :bar => Integer
   #   contract_writer ...
   #   contract_accessor ...
   # Defines contract-checked accessors.  Method names and clauses are specified
-  # in a hash.
+  # in a hash.  Hash values are any valid clause.
   #
   # ===Invariants
   #   invariant(optional_message) { returns true }
-  # Aliased as +always+.  Has access to instance variables and methods of class
+  # Aliased as +always+.  Has access to instance variables and methods of object
   # but calls to same are unchecked.
   #
   # ===Pre/post-conditions
-  #   before(optional_message) { |all, args| assert condition }
-  #   after(optional_message)  { |all, args, returned| assert condition }
-  #   around(optional_message) { |all, args| assert condition }
+  #   before(optional_message) { |arg1, ...| assert condition }
+  #   after(optional_message)  { |arg1, ..., returned| assert condition }
+  #   around(optional_message) { |arg1, ...| assert condition }
   # Check a set of conditions, using assertions, before and after method
-  # invocation.  +before+ and +after+ are aliased as +requires+ and +ensure+ 
+  # invocation.  +before+ and +after+ are aliased as +requires+ and +ensures+ 
   # respectively.  +around+ currently throws a block argument warning; this
   # should be fixed soon.  Same scope rules as invariants, so you can check
   # instance variables and local methods.  All Test::Unit::Assertions are available
@@ -157,8 +162,13 @@ module Handshake
   # with test case execution.
   #
   # ===Abstract class decorator
+  #   class SuperDuperContract
+  #     include Handshake; abstract!
+  #     ...
+  #   end
+  #
   # To define a class as non-instantiable and have Handshake raise a
-  # ContractViolation if a caller attempts to do so, call +abstract!+
+  # ContractViolation if a caller attempts to do so, call <tt>abstract!</tt>
   # at the top of the class definition.  This attribute is not inherited
   # by subclasses, but is useful if you would like to define a pure-contract
   # superclass that isn't intended to be instantiated directly.
@@ -176,7 +186,8 @@ module Handshake
     end
     alias :always :invariant
 
-    # Override the +===+ method to define it in terms of +is_a?+.
+    # In order for contract clauses to work in conjunction with Handshake
+    # proxy objects, the === method must be redefined in terms of is_a?.
     def ===(other)
       other.is_a? self
     end
@@ -514,7 +525,7 @@ module Handshake
   # For block-checking, we need a class which is_a? Proc for instance checking
   # purposes but isn't the same so as not to prevent the user from passing in
   # explicitly defined procs as arguments.  Expect this to be replaced at
-  # some point in the future with a block_contract construct.
+  # some point in the future with a +block_contract+ construct.
   class Block
     def Block.===(o); Proc === o; end
   end
@@ -562,18 +573,24 @@ module Handshake
     end
 
     # Passes if argument is true or false.
+    #   contract self => boolean?
+    #   def ==(other)
+    #     ...
+    #   end
     def boolean?
       #clause("true or false") { |o| ( o == true ) || ( o == false ) }
       any?(TrueClass, FalseClass)
     end
 
     # Passes if any of the subclauses pass on the argument.
+    #   contract any?(String, Symbol) => anything
     def any?(*clauses)
       clause("any of #{clauses.inspect}") { |o| clauses.any? {|c| c === o} }
     end
     alias :or? :any?
     
     # Passes only if all of the subclauses pass on the argument.
+    #   contract all?(Integer, nonzero?)
     def all?(*clauses)
       clause("all of #{clauses.inspect}") { |o| clauses.all? {|c| c === o} }
     end
@@ -586,12 +603,18 @@ module Handshake
 
     # Passes if argument is Enumerable and the subclause passes on all of 
     # its objects.
+    #
+    #   class StringArray < Array
+    #     include Handshake
+    #     contract :+, many?(String) => self
+    #   end
     def many?(clause)
       many_with_map?(clause) { |o| o }
     end
     
     # Passes if argument is Enumerable and the subclause passes on all of
     # its objects, mapped over the given block.
+    #   contract many_with_map?(nonzero?, "person age") { |person| person.age } => anything
     def many_with_map?(clause, mesg=nil, &block) # :yields: argument
       map_mesg = ( mesg.nil? ? "" : " after map #{mesg}" )
       many_with_map = clause("many of #{clause.inspect}#{map_mesg}") do |o|
@@ -676,8 +699,8 @@ module Handshake
 end
 
 
-module Test # :nodoc
-  module Unit # :nodoc
+module Test # :nodoc:
+  module Unit # :nodoc:
     module Assertions
       # Asserts that the given block violates the contract by raising an
       # instance of Handshake::ContractViolation.
