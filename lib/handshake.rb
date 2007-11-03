@@ -57,38 +57,30 @@ module Handshake
     base.write_inheritable_hash :method_contracts, {}
 
     class << base
-      alias :instantiate :new
+      alias :__new__ :new
       # Override the class-level new method of every class that includes
       # Contract and cause it to return a proxy object for the original.
       def new(*args, &block)
-        return instantiate(*args, &block) if Handshake.suppressed?
-        if ( @non_instantiable ||= false )
+        return __new__(*args, &block) if Handshake.suppressed?
+        
+        unless instantiable?
           raise ContractViolation, "This class has been marked as abstract and cannot be instantiated."
         end
-        o = nil
 
-        # Special case:  at this stage it's only possible to check arguments
-        # (before) and invariants (after).  Maybe postconditions?
         Handshake.catch_contract("Contract violated in call to constructor of class #{self}") do
           if contract_defined? :initialize
             method_contracts[:initialize].check_accepts!(*args, &block)
           end
         end
 
-        ### Instantiate the object itself. 
-        o = self.instantiate(*args, &block)
+        o = __new__(*args, &block)
+        raise ContractError, "Could not instantiate object" if o.nil?
 
         Handshake.catch_contract("Invariant violated by constructor of class #{self}") do
           o.check_invariants!
         end
 
-        raise ContractError, "Could not instantiate object" if o.nil?
-
-        ### Wrap the object in a proxy.
-        p = Proxy.new( o )
-        # Make sure that the object has a reference back to the proxy.
-        o.instance_variable_set("@checked_self", p)
-        p
+        Proxy.new o
       end
     end
   end
@@ -180,7 +172,11 @@ module Handshake
     # Define this class as non-instantiable.  Subclasses do not inherit this
     # attribute.
     def abstract!
-      @non_instantiable = true
+      @instantiable = false
+    end
+
+    def instantiable?
+      @instantiable ||= true
     end
 
     # Specify an invariant, with a block and an optional error message.
@@ -527,6 +523,7 @@ module Handshake
     # Accepts an object to be proxied.
     def initialize(proxied)
       @proxied = proxied
+      @proxied.instance_variable_set(:@checked_self, self)
     end
 
     # Returns the wrapped object.  Method calls made against this object
