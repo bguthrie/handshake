@@ -1,0 +1,13 @@
+Manifest.txt
+README.txt
+MIT-LICENSE
+Rakefile
+
+lib/handshake.rb
+lib/handshake/block_contract.rb
+lib/handshake/clause_methods.rb
+lib/handshake/inheritable_attributes.rb
+lib/handshake/proxy_self.rb
+lib/handshake/version.rb
+test/tc_handshake.rb
+test/tc_disable_handshake.rb
