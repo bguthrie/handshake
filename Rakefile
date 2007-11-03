@@ -1,37 +1,55 @@
-require 'rubygems' 
-Gem::manage_gems 
-require 'rake/gempackagetask' 
-require 'rake/rdoctask'
+require 'rubygems'
+require 'rake'
+require 'rake/clean'
 require 'rake/testtask'
+require 'rake/packagetask'
+require 'rake/gempackagetask'
+require 'rake/rdoctask'
+require 'rake/contrib/rubyforgepublisher'
+require 'fileutils'
+require 'hoe'
 
-spec = Gem::Specification.new do |s| 
-  s.name = "Handshake" 
-  s.version = "0.2.0" 
-  s.author = "Brian Guthrie" 
-  s.email = "btguthrie@gmail.com" 
-  s.homepage = "http://brianguthrie.com/projects/handshake"
-  s.platform = Gem::Platform::RUBY 
-  s.summary = "An informal design-by-contract system" 
-  s.files = FileList["{bin,tests,lib,docs}/**/*"].exclude("rdoc").to_a 
-  s.require_path = "lib" 
-  s.autorequire = "handshake" 
-  s.test_file = "tests/tc_handshake.rb" 
-  s.has_rdoc = true 
-  s.extra_rdoc_files = ["README"] 
-end 
+include FileUtils
+require File.join(File.dirname(__FILE__), 'lib', 'handshake', 'version')
 
-Rake::GemPackageTask.new(spec) do |pkg| 
-  pkg.need_tar = true 
-  pkg.need_zip = true
-end 
+AUTHOR            = "Brian Guthrie"  # can also be an array of Authors
+EMAIL             = "btguthrie@gmail.com"
+DESCRIPTION       = "Handshake is a simple design-by-contract system for Ruby."
+GEM_NAME          = "handshake" # what ppl will type to install your gem
+RUBYFORGE_PROJECT = "handshake" # The unix name for your project
+HOMEPATH          = "http://#{RUBYFORGE_PROJECT}.rubyforge.org"
 
-Rake::RDocTask.new do |rdoc|
-  rdoc.title = "Handshake"
-  rdoc.rdoc_files.include("lib/handshake.rb")
+
+NAME      = "handshake"
+REV       = nil # UNCOMMENT IF REQUIRED: File.read(".svn/entries")[/committed-rev="(d+)"/, 1] rescue nil
+VERS      = ENV['VERSION'] || (Handshake::VERSION::STRING + (REV ? ".#{REV}" : ""))
+CLEAN.include ['**/.*.sw?', '*.gem', '.config']
+RDOC_OPTS = ['--quiet', '--title', "Handshake documentation",
+             "--opname", "index.html",
+             "--line-numbers", 
+             "--main", "README",
+             "--inline-source"]
+
+class Hoe
+  def extra_deps 
+    @extra_deps.reject { |x| Array(x).first == 'hoe' } 
+  end 
 end
 
-Rake::TestTask.new do |test|
-  test.libs << "test"
-  test.test_files = FileList['test/tc*.rb']
-  test.verbose = true
+# Generate all the Rake tasks
+# Run 'rake -T' to see list of generated tasks (from gem root directory)
+Hoe.new(GEM_NAME, VERS) do |p|
+  p.author         = AUTHOR 
+  p.description    = DESCRIPTION
+  p.email          = EMAIL
+  p.summary        = DESCRIPTION
+  p.url            = HOMEPATH
+  p.rubyforge_name = RUBYFORGE_PROJECT if RUBYFORGE_PROJECT
+  p.test_globs = ["test/tc_*.rb"]
+  p.clean_globs = CLEAN  #An array of file patterns to delete on clean.
+  
+  # == Optional
+  #p.changes        - A description of the release's latest changes.
+  #p.extra_deps     - An array of rubygem dependencies.
+  #p.spec_extras    - A hash of extra values to set in the gemspec.
 end

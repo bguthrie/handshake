@@ -1,27 +1,7 @@
-# test_handshake.rb
-# Copyright (c) 2007 Brian Guthrie
-# 
-# Permission is hereby granted, free of charge, to any person obtaining
-# a copy of this software and associated documentation files (the
-# "Software"), to deal in the Software without restriction, including
-# without limitation the rights to use, copy, modify, merge, publish,
-# distribute, sublicense, and/or sell copies of the Software, and to
-# permit persons to whom the Software is furnished to do so, subject to
-# the following conditions:
-# 
-# The above copyright notice and this permission notice shall be
-# included in all copies or substantial portions of the Software.
-# 
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-# LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-# WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 require 'test/unit'
 require 'handshake'
+
+# $DEBUG = true
 
 class TestContract < Test::Unit::TestCase
 
@@ -69,7 +49,7 @@ class TestContract < Test::Unit::TestCase
 
     assert_violation { NonEmptyArray.new([1]).pop }
 
-    assert_violation { PositiveBalance.new -10 }
+    assert_violation { PositiveBalance.new(-10) }
     assert_violation { PositiveBalance.new 0 }
     assert_passes    { PositiveBalance.new 10 }
     assert_violation { 
@@ -490,5 +470,59 @@ class TestContract < Test::Unit::TestCase
     assert_passes    { AcceptsSuperAndSub.new.call Superclass.new }
     assert_passes    { AcceptsSuperAndSub.new.call Subclass.new }
     assert_passes    { Superclass.new == Subclass.new }
+  end
+
+  class CheckedSelf
+    include Handshake
+    def call_checked(obj)
+      checked_self.call(obj)
+    end
+    def call_unchecked(obj)
+      call(obj)
+    end
+    contract String => anything
+    def call(str); str; end
+  end
+
+  class ExtendsCheckedSelf < CheckedSelf
+    private
+    contract Numeric => anything
+    def call(n); n; end
+  end
+
+  def test_checked_self
+    assert_violation { CheckedSelf.new.call(5) }
+    assert_violation { CheckedSelf.new.call_checked(5) }
+    assert_passes    { CheckedSelf.new.call_unchecked(5) }
+    assert_passes    { CheckedSelf.new.call_checked("foo") }
+    assert_violation { ExtendsCheckedSelf.new.call_checked("foo") }
+    assert_passes    { ExtendsCheckedSelf.new.call_checked(5) }
+    assert_passes    { ExtendsCheckedSelf.new.call_unchecked("foo") }
+  end
+
+  class CheckedBlockContract
+    include Handshake
+
+    contract [ anything, Block(String => Integer) ] => Integer
+    def yields(value); yield(value); end
+
+    contract [ anything, Block(String => Integer) ] => Integer
+    def calls(value, &block); block.call(value); end
+  end
+  
+  def test_checked_block_contract_yields
+    assert_violation { CheckedBlockContract.new.yields("3") {|s| s.to_s } }
+    assert_violation { CheckedBlockContract.new.yields("3") {|s| "foo" } }
+    assert_violation { CheckedBlockContract.new.yields(3) {|s| s.to_i} }
+    assert_passes    { CheckedBlockContract.new.yields("3") {|s| 3 } }
+    assert_passes    { CheckedBlockContract.new.yields("3") {|s| s.to_i } }
+  end
+  
+  def test_checked_block_contract_calls
+    assert_violation { CheckedBlockContract.new.calls("3") {|s| s.to_s } }
+    assert_violation { CheckedBlockContract.new.calls("3") {|s| "foo" } }
+    assert_violation { CheckedBlockContract.new.calls(3) {|s| s.to_i} }
+    assert_passes    { CheckedBlockContract.new.calls("3") {|s| 3 } }
+    assert_passes    { CheckedBlockContract.new.calls("3") {|s| s.to_i } }
   end
 end

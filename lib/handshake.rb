@@ -1,46 +1,11 @@
-# handshake.rb
-# Copyright (c) 2007 Brian Guthrie
-# 
-# Permission is hereby granted, free of charge, to any person obtaining
-# a copy of this software and associated documentation files (the
-# "Software"), to deal in the Software without restriction, including
-# without limitation the rights to use, copy, modify, merge, publish,
-# distribute, sublicense, and/or sell copies of the Software, and to
-# permit persons to whom the Software is furnished to do so, subject to
-# the following conditions:
-# 
-# The above copyright notice and this permission notice shall be
-# included in all copies or substantial portions of the Software.
-# 
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-# LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-# WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+Dir[File.join(File.dirname(__FILE__), 'handshake/**/*.rb')].sort.each { |lib| require lib }
 
-require 'inheritable_attributes'
 require 'test/unit/assertions'
-
-class Class # :nodoc:
-  # Redefines each of the given methods as a call to self#send.  This assumes
-  # that self#send knows what do with them.
-  def proxy_self(*meths)
-    meths.each do |meth|
-      class_eval <<-EOS
-        def #{meth}(*args, &block)
-          self.send(:#{meth}, *args, &block)
-        end
-      EOS
-    end
-    nil
-  end
-end
 
 # A module for defining class and method contracts (as in design-by-contract
 # programming).  To use it in your code, include this module in a class.
-# Note that when you do so, that class's +new+ method will be replaced.
+# Note that when you do so, that class's +new+ method will be replaced with
+# one that returns a contract-checked proxy object.
 # There are three different types of contracts you can specify on a class.
 # See Handshake::ClassMethods for more documentation.
 module Handshake
@@ -59,11 +24,21 @@ module Handshake
     end
   end
 
+  # Suppress Handshake contract checking, for use in production code.
+  def Handshake.suppress!
+    @suppress_handshake = true
+  end
+
+  def Handshake.suppressed?
+    @suppress_handshake = false unless defined?(@suppress_handshake)
+    @suppress_handshake
+  end
+
   # When Handshake is included in a class, that class's +new+ method is
   # overridden to provide custom functionality.  A proxy object, returned
   # in place of the real object, filters all external method calls through
   # any contracts that have been defined.
-  # *N.B.:* Handshake is designed to act as a barrier between an object and
+  # <b>N.B.:<b> Handshake is designed to act as a barrier between an object and
   # its callers.  However, anything that takes place within that barrier
   # is not checked.  This means that Handshake is, at the moment, unable
   # to enforce contracts on methods called only internally, notably private
@@ -86,18 +61,21 @@ module Handshake
       # Override the class-level new method of every class that includes
       # Contract and cause it to return a proxy object for the original.
       def new(*args, &block)
-        if @non_instantiable
+        return instantiate(*args, &block) if Handshake.suppressed?
+        if ( @non_instantiable ||= false )
           raise ContractViolation, "This class has been marked as abstract and cannot be instantiated."
         end
         o = nil
 
-        # Special case:  check invariants for constructor.
+        # Special case:  at this stage it's only possible to check arguments
+        # (before) and invariants (after).  Maybe postconditions?
         Handshake.catch_contract("Contract violated in call to constructor of class #{self}") do
           if contract_defined? :initialize
             method_contracts[:initialize].check_accepts!(*args, &block)
           end
         end
 
+        ### Instantiate the object itself. 
         o = self.instantiate(*args, &block)
 
         Handshake.catch_contract("Invariant violated by constructor of class #{self}") do
@@ -105,21 +83,45 @@ module Handshake
         end
 
         raise ContractError, "Could not instantiate object" if o.nil?
-        Proxy.new( o )
+
+        ### Wrap the object in a proxy.
+        p = Proxy.new( o )
+        # Make sure that the object has a reference back to the proxy.
+        o.instance_variable_set("@checked_self", p)
+        p
       end
     end
   end
 
-  # Defines class methods for contracts.  All methods accept an optional method
-  # name to assign the contract to as their first argument.  If none is given, 
-  # contract will be assigned to the next added method.  Contracts defined on
-  # superclasses are inherited by its subclasses.  Subclasses may add new
-  # invariants and override other existing contracts by redefining them.
+  # This module contains methods that are mixed into any class that includes
+  # Handshake.  They allow you to define constraints on that class and its
+  # methods.  Subclasses will inherit the contracts and invariants of its
+  # superclass, but Handshake contracts currently can't be mixed-in via a
+  # module.
+  #
+  # This module defines three kinds of contracts: class invariants, method
+  # signature constraints, and more general method pre- and post-conditions.
+  # Invariants accept a block which should return a boolean.  Pre- and post-
+  # conditions expect you to use assertions (all of Test::Unit's standard
+  # assertions are available) and will pass unless an assertion fails.
+  # Method signature contracts map inputs clauses to output clauses.  A
+  # "clause" is defined as any object that implements the === method.
+  #
+  # All method contracts are defined on the method defined immediately after
+  # their declaration unless a method name is specified.  For example,
+  #
+  #   contract :foo, String => Integer
+  #
+  # is equivalent to
+  #
+  #   contract String => Integer
+  #   def foo ...
   #
   # ===Method signature contracts
   #   contract String => Integer
   #   contract [ String, 1..5, [ Integer ], Block ] => [ String, String ]
   #   contract clause("must equal 'foo'") { |o| o == "foo" } => anything
+  #   contract Block(String => Integer) => Symbol
   #
   # A method signature contract is defined as a mapping from valid inputs to 
   # to valid outputs.  A clause here is any object which implements the
@@ -128,9 +130,10 @@ module Handshake
   #
   # Multiple arguments are specified as an array.  To specify that a method
   # accepts varargs, define a nested array as the last or second-to-last
-  # item in the array.  To specify that a method accepts a block, place
-  # the Block constant as the last item in the array.  Expect this to change
-  # in the future to allow for block contracts.
+  # item in the array.  To specify that a method accepts a block, use the
+  # Block clause, which accepts a method signature hash as an argument,
+  # as above.  To specify that a method should accept a block, but that the
+  # block should be unchecked, simply use Block instead of Block(... => ...).
   #
   # New clauses may be created easily with the Handshake::ClauseMethods#clause
   # method.  Handshake::ClauseMethods also provides a number of useful contract
@@ -173,6 +176,7 @@ module Handshake
   # by subclasses, but is useful if you would like to define a pure-contract
   # superclass that isn't intended to be instantiated directly.
   module ClassMethods
+
     # Define this class as non-instantiable.  Subclasses do not inherit this
     # attribute.
     def abstract!
@@ -241,7 +245,7 @@ module Handshake
     # Defines contract-checked attribute readers with the given hash of method
     # name to clause.
     def contract_reader(meth_to_clause)
-      attr_reader *(meth_to_clause.keys)
+      attr_reader(*(meth_to_clause.keys))
       meth_to_clause.each do |meth, cls|
         contract meth, nil => cls
       end
@@ -250,7 +254,7 @@ module Handshake
     # Defines contract-checked attribute writers with the given hash of method
     # name to clause.
     def contract_writer(meth_to_clause)
-      attr_writer *(meth_to_clause.keys)
+      attr_writer(*(meth_to_clause.keys))
       meth_to_clause.each do |meth, cls|
         contract "#{meth}=".to_sym, cls => anything
       end
@@ -284,11 +288,8 @@ module Handshake
     private
 
     def define_contract(method, contract_hash)
-      raise ArgumentError unless contract_hash.length == 1
-      accepts, returns = [ contract_hash.keys.first, contract_hash.values.first ].map {|v| arrayify v}
       contract = contract_for(method).dup
-      contract.accepts = accepts
-      contract.returns = returns
+      contract.signature = contract_hash
       write_inheritable_hash :method_contracts, { method => contract }
     end
 
@@ -312,10 +313,6 @@ module Handshake
       end
     end
 
-    def arrayify(value_or_array)
-      value_or_array.is_a?(Array) ? value_or_array : [ value_or_array ]
-    end
-
     def defer(type, value)
       ( @deferred ||= {} )[type] = value
     end
@@ -333,23 +330,98 @@ module Handshake
         end
       end
     end
+    
+    protected
+    # Returns the contract-checked proxy of self.
+    def checked_self
+      @checked_self || self
+    end
+  end
+
+  # A ProcContract encapsulates knowledge about the signature of a method and
+  # can check arrays of values against the signature through the
+  # +check_equivalence!+ method.
+  class ProcContract # :nodoc:
+    attr_accessor :accepts, :returns
+
+    def initialize
+      @accepts, @returns = [], []
+    end
+
+    # Accepts signatures of the form:
+    #   Clause => Clause
+    #   [ Clause, Clause ] => Clause
+    def signature=(contract_hash)
+      raise ArgumentError unless contract_hash.length == 1
+      sig_accepts, sig_returns = [ contract_hash.keys.first, contract_hash.values.first ].map {|v| arrayify v}
+      self.accepts = sig_accepts
+      self.returns = sig_returns
+    end
+
+    def check_accepts!(*args, &block)
+      @accepts.each_with_index do |expected_arg, i|
+        # Varargs: consume all remaining arguments.
+        if expected_arg.is_a? Array
+          check_varargs!(args, expected_arg.first, i) and break
+        end
+        check_equivalence!(args[i], expected_arg)
+      end
+    end
+
+    def check_returns!(*args)
+      @returns.each_with_index do |expected, i|
+        check_equivalence!(args[i], expected)
+      end
+    end
+
+    def accepts_varargs?
+      accepts.last.is_a? Array
+    end
+
+    private
+    def check_varargs!(given_args, expected, index)
+      given_args[index..-1].each {|arg| check_equivalence!(arg, expected)}
+    end
+
+    def arrayify(value_or_array)
+      value_or_array.is_a?(Array) ? value_or_array : [ value_or_array ]
+    end
+
+    
+    # Checks the given value against the expected value using === and throws
+    # :contract if it fails.  This is a bit clunky.
+    def check_equivalence!(given, expected)
+      unless expected === given
+        mesg = "expected #{expected.inspect}, received #{given.inspect}"
+        throw :contract, ContractViolation.new(mesg)
+      end
+    end
   end
 
   # Class representing method contracts.  Not for external use.
-  class MethodContract # :nodoc: 
-    attr_accessor :preconditions, :postconditions, :returns
-    attr_reader :accepts
+  class MethodContract < ProcContract # :nodoc: 
+    attr_accessor :preconditions, :postconditions
+    attr_reader :block_contract
 
     def initialize(method_name)
       @method_name = method_name
-      @preconditions, @postconditions, @accepts, @returns = [], [], [], []
+      @preconditions, @postconditions = [], []
+      @accepts, @returns = [], []
+      @block_contract = nil
+    end
+
+    def check_accepts!(*args, &block)
+      super(*args, &block)
+      if expects_block?
+        check_equivalence!(block, Proc)
+      end
     end
 
     # Returns true only if this MethodContract has been set up to check
     # for one or more contract conditions.
     def defined?
-      [ @preconditions, @postconditions, @accepts, @returns ].all? do |ary|
-        ary.empty?
+      [ preconditions, postconditions, accepts, returns ].any? do |ary|
+        not ary.empty?
       end
     end
 
@@ -367,6 +439,12 @@ module Handshake
       check_conditions!(o, args, @preconditions)
     end
 
+    # Checks the given conditions against the object, passing the given args
+    # into the block.  Throws :contract if any fail or if an exception is
+    # raised.  Because of the need to evaluate the condition in the context
+    # of the object itself, a temporary method called +bound_condition_passes?+
+    # is defined on the object, using the block associated with the condition.
+    # TODO Is there a better way to evaluate an arbitary block in a particular binding?  There must be.
     def check_conditions!(o, args, conditions)
       conditions.each do |condition|
         o.class.instance_eval do
@@ -383,55 +461,29 @@ module Handshake
       end
     end
 
+    # If the last argument is a Block, handle it as a special case.  We
+    # do this to ensure that there's no conflict with any real arguments
+    # which may accept Procs.
     def accepts=(args)
-      # If the last argument is a Block, handle it as a special case.  We
-      # do this to ensure that there's no conflict with any real arguments
-      # which may accept Procs.
-      @block = args.pop if args.last == Block
+      if args.last == Block # Transform into a ProcContract
+        args.pop
+        @block_contract = ProcContract.new
+        @block_contract.accepts = ClauseMethods::ANYTHING
+        @block_contract.returns = ClauseMethods::ANYTHING        
+      elsif args.last.is_a?(ProcContract)
+        @block_contract = args.pop
+      end
 
       if args.find_all {|o| o.is_a? Array}.length > 1
         raise ContractError, "Cannot define more than one expected variable argument"
       end
-      @accepts = args
+      super(args)
     end
 
     def expects_block?
-      not @block.nil?
+      not @block_contract.nil?
     end
 
-    def accepts_varargs?
-      @accepts.last.is_a? Array
-    end
-
-    def check_accepts!(*args, &block)
-      @accepts.each_with_index do |expected_arg, i|
-        # Varargs: consume all remaining arguments.
-        if expected_arg.is_a? Array
-          check_varargs!(args, expected_arg.first, i) and break
-        end
-        check_equivalence!(args[i], expected_arg)
-      end
-      if expects_block?
-        check_equivalence!(block, @block)
-      end
-    end
-
-    def check_returns!(*args)
-      @returns.each_with_index do |expected, i|
-        check_equivalence!(args[i], expected)
-      end
-    end
-
-    def check_varargs!(given_args, expected, index)
-      given_args[index..-1].each {|arg| check_equivalence!(arg, expected)}
-    end
-
-    def check_equivalence!(given, expected)
-      unless expected === given
-        mesg = "expected #{expected.inspect}, received #{given.inspect}"
-        throw :contract, ContractViolation.new(mesg)
-      end
-    end
   end
 
   # Specifies a condition on a method.  Not for external use.
@@ -453,7 +505,7 @@ module Handshake
     # Evaluates this class's block in the binding of the given object.
     def holds?(o)
       block = @block
-      o.instance_eval &block
+      o.instance_eval(&block)
     end
     def mesg
       @mesg || "Invariant check failed"
@@ -470,7 +522,7 @@ module Handshake
 
     # Redefine language-level methods inherited from Object, ensuring that
     # they are forwarded to the proxy object.
-    proxy_self *SELF_PROXIED
+    proxy_self(*SELF_PROXIED)
 
     # Accepts an object to be proxied.
     def initialize(proxied)
@@ -502,13 +554,20 @@ module Handshake
       # once and only once from within the stack trace.
       Handshake.catch_contract("Contract violated in call to #{meth_string}") do
         @proxied.check_invariants!
-        contract.check_accepts! *args, &block
+        contract.check_accepts!(*args, &block)
         contract.check_pre! @proxied, *args
       end
         
-      # make actual call
-      return_val = @proxied.send meth_name, *args, &block
-        
+      # make actual call, wrapping the given block in a new block so that
+      # contract checks work if receiver uses yield.
+      return_val = nil
+      if contract.expects_block?
+        cp = CheckedProc.new(contract.block_contract, &block)
+        return_val = @proxied.send(meth_name, *args) { |*argz| cp.call(*argz) }
+      else
+        return_val = @proxied.send(meth_name, *args, &block)
+      end
+         
       Handshake.catch_contract("Contract violated by #{meth_string}") do
         contract.check_returns! return_val
         contract.check_post! @proxied, *(args << return_val)
@@ -519,185 +578,12 @@ module Handshake
     end
     alias :method_missing :send
 
-
-  end
-
-  # For block-checking, we need a class which is_a? Proc for instance checking
-  # purposes but isn't the same so as not to prevent the user from passing in
-  # explicitly defined procs as arguments.  Expect this to be replaced at
-  # some point in the future with a +block_contract+ construct.
-  class Block
-    def Block.===(o); Proc === o; end
-  end
-
-  # Transforms the given block into a contract clause.  Clause fails if
-  # the given block returns false or nil, passes otherwise.  See
-  # Handshake::ClauseMethods for more examples of its use.  This object may
-  # be instantiated directly but calling Handshake::ClauseMethods#clause is
-  # generally preferable.
-  class Clause
-    # Defines a new Clause object with a block and a message.
-    # The block should return a boolean value.  The message is optional but
-    # strongly recommended for human-readable contract violation errors.
-    def initialize(mesg=nil, &block) # :yields: argument
-      @mesg, @block = mesg, block
-    end
-    # Returns true if the block passed to the constructor returns true when
-    # called with the given argument.
-    def ===(o)
-      @block.call(o)
-    end
-    # Returns the message defined for this Clause, or "undocumented clause"
-    # if none is defined.
-    def inspect; @mesg || "undocumented clause"; end
-    def ==(other)
-      other.class == self.class && other.mesg == @mesg && other.block == @block
-    end
-  end
-
-  # A collection of methods for defining constraints on method arguments.
-  module ClauseMethods
-    # Passes if the given block returns true when passed the argument.
-    def clause(mesg=nil, &block) # :yields: argument
-      Clause.new(mesg, &block)
-    end
-    
-    # Passes if the subclause does not pass on the argument.
-    def not?(clause)
-      clause("not #{clause.inspect}") { |o| not ( clause === o ) }
-    end
-    
-    # Always passes.
-    def anything
-      Clause.new("anything") { true }
-    end
-
-    # Passes if argument is true or false.
-    #   contract self => boolean?
-    #   def ==(other)
-    #     ...
-    #   end
-    def boolean?
-      #clause("true or false") { |o| ( o == true ) || ( o == false ) }
-      any?(TrueClass, FalseClass)
-    end
-
-    # Passes if any of the subclauses pass on the argument.
-    #   contract any?(String, Symbol) => anything
-    def any?(*clauses)
-      clause("any of #{clauses.inspect}") { |o| clauses.any? {|c| c === o} }
-    end
-    alias :or? :any?
-    
-    # Passes only if all of the subclauses pass on the argument.
-    #   contract all?(Integer, nonzero?)
-    def all?(*clauses)
-      clause("all of #{clauses.inspect}") { |o| clauses.all? {|c| c === o} }
-    end
-    alias :and? :all?
-    
-    # Passes if argument is numeric and nonzero.
-    def nonzero?
-      all? Numeric, clause("nonzero") {|o| o != 0}
-    end
-
-    # Passes if argument is Enumerable and the subclause passes on all of 
-    # its objects.
-    #
-    #   class StringArray < Array
-    #     include Handshake
-    #     contract :+, many?(String) => self
-    #   end
-    def many?(clause)
-      many_with_map?(clause) { |o| o }
-    end
-    
-    # Passes if argument is Enumerable and the subclause passes on all of
-    # its objects, mapped over the given block.
-    #   contract many_with_map?(nonzero?, "person age") { |person| person.age } => anything
-    def many_with_map?(clause, mesg=nil, &block) # :yields: argument
-      map_mesg = ( mesg.nil? ? "" : " after map #{mesg}" )
-      many_with_map = clause("many of #{clause.inspect}#{map_mesg}") do |o|
-        o.map(&block).all? { |p| clause === p }
-      end
-      all? Enumerable, many_with_map
-    end
-    
-    # Passes if argument is a Hash and if the key and value clauses pass all
-    # of its keys and values, respectively.
-    # E.g. <tt>hash_of?(Symbol, String)</tt>:
-    #   
-    #   :foo => "bar", :baz => "qux" # passes
-    #   :foo => "bar", "baz" => 3    # fails
-    def hash_of?(key_clause, value_clause)
-      all_keys   = many_with_map?(key_clause, "all keys")     { |kv| kv[0] }
-      all_values = many_with_map?(value_clause, "all values") { |kv| kv[1] }
-      all? Hash, all_keys, all_values
-    end
-
-    # Passes only if argument is a hash and does not contain any keys except
-    # those given.
-    # E.g. <tt>hash_with_keys(:foo, :bar, :baz)</tt>:
-    # 
-    #   :foo => 3                                     # passes
-    #   :foo => 10, :bar => "foo"                     # passes
-    #   :foo => "eight", :chunky_bacon => "delicious" # fails
-    def hash_with_keys(*keys)
-      key_assertion = clause("contains keys #{keys.inspect}") do |o|
-        ( o.keys - keys ).empty?
-      end
-      all? Hash, key_assertion
-    end
-    alias :hash_with_options :hash_with_keys
-
-    # Passes if:
-    # * argument is a hash, and
-    # * argument contains only the keys explicitly specified in the given
-    #   hash, and
-    # * every value contract in the given hash passes every applicable value
-    #   in the argument hash
-    # E.g. <tt>hash_contract(:foo => String, :bar => Integer)</tt>
-    #
-    #   :foo => "foo"               # passes
-    #   :bar => 3                   # passes
-    #   :foo => "bar", :bar => 42   # passes
-    #   :foo => 88, :bar => "none"  # fails
-    def hash_contract(hash)
-      value_assertions = hash.keys.map do |k|
-        clause("key #{k} requires #{hash[k].inspect}") do |o|
-          o.has_key?(k) ? hash[k] === o[k] : true
-        end
-      end
-      all? hash_with_keys(*hash.keys), *value_assertions
-    end
-
-    # Passes if argument responds to all of the given methods.
-    def responds_to?(*methods)
-      respond_assertions = methods.map do |m| 
-        clause("responds to #{m}") { |o| o.respond_to? m }
-      end
-      all? *respond_assertions
-    end
-    
-    # Allows you to check whether the argument is_a? of the given symbol.
-    # For example, is?(:String).  Useful for situations where you want
-    # to check for a class type that hasn't been defined yet when Ruby
-    # evaluates the contract but will have been by the time the code runs.
-    # Note that <tt>String => anything</tt> is equivalent to
-    # <tt>is?(:String) => anything</tt>.
-    def is?(class_symbol)
-      clause(class_symbol.to_s) { |o|
-        Object.const_defined?(class_symbol) && o.is_a?(Object.const_get(class_symbol))
-      }
-    end
-
   end
 
   class ContractViolation < RuntimeError; end
   class AssertionFailed   < ContractViolation; end
   class ContractError     < RuntimeError; end
 end
-
 
 module Test # :nodoc:
   module Unit # :nodoc:
