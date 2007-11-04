@@ -322,7 +322,7 @@ module Handshake
       self.class.invariants.each do |invar|
         unless invar.holds?(self)
           mesg = invar.mesg || "Invariant check failed"
-          throw :contract, ContractViolation.new(mesg)
+          throw :contract, ContractViolation.new(self.class.to_s + " " + mesg)
         end
       end
     end
