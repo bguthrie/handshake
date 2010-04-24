@@ -14,7 +14,6 @@ flag is set.
 * Contracts on blocks and procs
 * Method pre- and post-conditions
 * Class invariants
-* Define a class as abstract
 
 === Examples
 

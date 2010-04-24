@@ -63,10 +63,6 @@ module Handshake
       def new(*args, &block)
         return __new__(*args, &block) if Handshake.suppressed?
         
-        unless instantiable?
-          raise ContractViolation, "This class has been marked as abstract and cannot be instantiated."
-        end
-
         Handshake.catch_contract("Contract violated in call to constructor of class #{self}") do
           if contract_defined? :initialize
             method_contracts[:initialize].check_accepts!(*args, &block)
@@ -155,29 +151,7 @@ module Handshake
   # for use, but any such AssertionFailed errors encountered are re-raised 
   # by Handshake as Handshake::AssertionFailed errors to avoid confusion
   # with test case execution.
-  #
-  # ===Abstract class decorator
-  #   class SuperDuperContract
-  #     include Handshake; abstract!
-  #     ...
-  #   end
-  #
-  # To define a class as non-instantiable and have Handshake raise a
-  # ContractViolation if a caller attempts to do so, call <tt>abstract!</tt>
-  # at the top of the class definition.  This attribute is not inherited
-  # by subclasses, but is useful if you would like to define a pure-contract
-  # superclass that isn't intended to be instantiated directly.
   module ClassMethods
-
-    # Define this class as non-instantiable.  Subclasses do not inherit this
-    # attribute.
-    def abstract!
-      @instantiable = false
-    end
-
-    def instantiable?
-      @instantiable ||= true
-    end
 
     # Specify an invariant, with a block and an optional error message.
     def invariant(mesg=nil, &block) # :yields:
