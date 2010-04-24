@@ -1,180 +1,190 @@
+require 'rubygems'
 require 'test/unit'
 require 'handshake'
+require 'shoulda'
 
 # $DEBUG = true
 
 class TestContract < Test::Unit::TestCase
+  context Handshake do
+    context "invariant" do
+      class InvariantDeclarations
+        include Handshake
+        invariant { true }
+      end
 
-  class InvariantDeclarations
-    include Handshake
-    invariant { true }
-  end
+      class ExtendsInvariantDeclarations < InvariantDeclarations
+        invariant { true }
+      end
 
-  class ExtendsInvariantDeclarations < InvariantDeclarations
-    invariant { true }
-  end
+      should "correctly track the list of invariants in superclasses and subclasses" do
+        assert_equal 1, InvariantDeclarations.invariants.length
+        assert_equal 2, ExtendsInvariantDeclarations.invariants.length
+      end
 
-  def test_invariant_declarations
-    assert_equal 1, InvariantDeclarations.invariants.length
-    assert_equal 2, ExtendsInvariantDeclarations.invariants.length
-  end
+      class NonFunctionalArray < Array
+        include Handshake
+        invariant { false }
+      end
 
-  class NonFunctionalArray < Array
-    include Handshake
-    invariant { false }
-  end
+      should "fail a very simple invariant check" do
+        assert_violation { NonFunctionalArray.new }
+      end
+      
+      class PositiveBalance
+        include Handshake
+        invariant { @balance > 0 }
+        attr_accessor :balance
+        def initialize(balance); @balance = balance; end
+      end
 
-  def test_basic_invariant
-    assert_violation { NonFunctionalArray.new }
-  end
+      should "check invariants that leverage new instance methods" do
+        assert_violation { PositiveBalance.new(-10) }
+        assert_violation { PositiveBalance.new 0 }
+        assert_passes    { PositiveBalance.new 10 }
+        assert_violation { 
+          pb = PositiveBalance.new(10); pb.balance = -10
+        }
+      end
 
-  class NonEmptyArray < Array
-    include Handshake
-    invariant { not empty? }
-  end
-  class ExtendsNonEmptyArray < NonEmptyArray; end
-  
-  class PositiveBalance
-    include Handshake
-    invariant { @balance > 0 }
-    attr_accessor :balance
-    def initialize(balance); @balance = balance; end
-  end
+      class NonEmptyArray < Array
+        include Handshake
+        invariant { not empty? }
+      end
+      class ExtendsNonEmptyArray < NonEmptyArray; end
+      
+      should "check invariants that leverage inherited instance methods" do
+        assert_violation { NonEmptyArray.new }
+        assert_passes    { NonEmptyArray.new [1] }
+        assert_violation { ExtendsNonEmptyArray.new }
+        assert_passes    { ExtendsNonEmptyArray.new [1] }
 
-  def test_invariants
-    assert_violation { NonEmptyArray.new }
-    assert_passes    { NonEmptyArray.new [1] }
-    assert_violation { ExtendsNonEmptyArray.new }
-    assert_passes    { ExtendsNonEmptyArray.new [1] }
+        assert_violation { NonEmptyArray.new([1]).pop }
+      end
+    end
+    
+    context "contract" do
+      class MethodDeclarations
+        include Handshake
+        contract :accepts_str, String => anything
+        contract :accepts_int, Integer => anything
+      end
+      class ExtendsMethodDeclarations < MethodDeclarations; end
 
-    assert_violation { NonEmptyArray.new([1]).pop }
+      should "tie contract declaration to the method name to which they apply, and apply them to subclasses" do
+        assert MethodDeclarations.method_contracts.has_key?(:accepts_str)
+        assert MethodDeclarations.method_contracts.has_key?(:accepts_int)
+        assert ExtendsMethodDeclarations.method_contracts.has_key?(:accepts_str)
+        assert ExtendsMethodDeclarations.method_contracts.has_key?(:accepts_int)
+      end
+      
+      class AcceptsString
+        include Handshake
+        contract :initialize, String => anything
+        def initialize(str); @str = str; end
+        contract String => anything
+        def str=(str); @str = str; end
+      end
+      class ExtendsAcceptsString < AcceptsString; end
+      
+      class AcceptsIntegerInstead < AcceptsString
+        contract :initialize, Integer => anything
+      end
+      
+      class AcceptsSymbolInstead < AcceptsString
+        contract :initialize, Symbol => anything
+      end
 
-    assert_violation { PositiveBalance.new(-10) }
-    assert_violation { PositiveBalance.new 0 }
-    assert_passes    { PositiveBalance.new 10 }
-    assert_violation { 
-      pb = PositiveBalance.new(10); pb.balance = -10
-    }
-  end
+      should "check simple type contracts for a single method argument" do
+        assert_violation { AcceptsString.new 3 }
+        assert_violation { AcceptsString.new :foo }
+        assert_passes    { AcceptsString.new "string" }
+        assert_violation { AcceptsString.new("foo").str = 3 }
+        assert_violation { ExtendsAcceptsString.new 3 }
+        assert_violation { ExtendsAcceptsString.new :foo }
+        assert_passes    { ExtendsAcceptsString.new "string" }
+        assert_violation { ExtendsAcceptsString.new("foo").str = 3 }
+        assert_violation { AcceptsIntegerInstead.new("foo") }
+        assert_passes    { AcceptsIntegerInstead.new 3 }
+        assert_violation { AcceptsSymbolInstead.new "foo" }
+        assert_violation { AcceptsSymbolInstead.new 3 }
+        assert_passes    { AcceptsSymbolInstead.new :foo }
+      end
+      
+      class ReturnsString
+        include Handshake
+        contract anything => String
+        def call(val); val; end
+      end
+      class ExtendsReturnsString < ReturnsString; end
 
-  class MethodDeclarations
-    include Handshake
-    contract :accepts_str, String => anything
-    contract :accepts_int, Integer => anything
-    def accepts_str(str); str; end
-    def accepts_int(int); int; end
-  end
-  class ExtendsMethodDeclarations < MethodDeclarations; end
+      should "check simple type contracts for a single method return value" do
+        assert_violation { ReturnsString.new.call(1) }
+        assert_violation { ReturnsString.new.call(true) }
+        assert_passes    { ReturnsString.new.call("foo") }
+        assert_violation { ExtendsReturnsString.new.call(1) }
+        assert_violation { ExtendsReturnsString.new.call(true) }
+        assert_passes    { ExtendsReturnsString.new.call("foo") }
+      end
+      
+      class ReturnsMultiple
+        include Handshake
+        contract [ String, Integer ] => anything
+        def call(arg1, arg2); return arg1, arg2; end
+      end
 
-  def test_method_declarations
-    assert MethodDeclarations.method_contracts.has_key?(:accepts_str)
-    assert MethodDeclarations.method_contracts.has_key?(:accepts_int)
-    assert ExtendsMethodDeclarations.method_contracts.has_key?(:accepts_str)
-    assert ExtendsMethodDeclarations.method_contracts.has_key?(:accepts_int)
-  end
+      should "check simple type contracts for multiple method arguments" do
+        assert_violation { ReturnsMultiple.new.call("foo", "foo") }
+        assert_violation { ReturnsMultiple.new.call(3, 3) }
+        assert_passes    { ReturnsMultiple.new.call("foo", 3) }
+      end
+      
+      class AcceptsVarargs
+        include Handshake
+        contract [[ String ]] => anything
+        def initialize(*strs); @strs = strs; end
+      end
 
-  class AcceptsString
-    include Handshake
-    contract :initialize, String => anything
-    def initialize(str); @str = str; end
-    contract String => anything
-    def str=(str); @str = str; end
-  end
-  class ExtendsAcceptsString < AcceptsString; end
-  class AcceptsIntegerInstead < AcceptsString
-    contract :initialize, Integer => anything
-  end
-  class AcceptsSymbolInstead < AcceptsString
-    contract :initialize, Symbol => anything
-  end
+      should "check simple type contracts for methods that accept varargs" do
+        assert_passes    { AcceptsVarargs.new }
+        assert_violation { AcceptsVarargs.new(1, 2, 3) }
+        assert_violation { AcceptsVarargs.new("foo", 1, 2) }
+        assert_violation { AcceptsVarargs.new(:foo, "foo") }
+        assert_passes    { AcceptsVarargs.new("foo") }
+        assert_passes    { AcceptsVarargs.new("foo1", "foo2") }
+      end
+      
+      class AcceptsBlock
+        include Handshake
+        contract Block => anything
+        def call1; end
+        contract Block => anything
+        def call2(&block); end
+      end
 
-  def test_method_accepts
-    assert_violation { AcceptsString.new 3 }
-    assert_violation { AcceptsString.new :foo }
-    assert_passes    { AcceptsString.new "string" }
-    assert_violation { AcceptsString.new("foo").str = 3 }
-    assert_violation { ExtendsAcceptsString.new 3 }
-    assert_violation { ExtendsAcceptsString.new :foo }
-    assert_passes    { ExtendsAcceptsString.new "string" }
-    assert_violation { ExtendsAcceptsString.new("foo").str = 3 }
-    assert_violation { AcceptsIntegerInstead.new("foo") }
-    assert_passes    { AcceptsIntegerInstead.new 3 }
-    assert_violation { AcceptsSymbolInstead.new "foo" }
-    assert_violation { AcceptsSymbolInstead.new 3 }
-    assert_passes    { AcceptsSymbolInstead.new :foo }
-  end
+      should "check contracts that ensure methods can accept a block" do
+        assert_violation { AcceptsBlock.new.call1 }
+        assert_violation { AcceptsBlock.new.call2 }
+        assert_passes    { AcceptsBlock.new.call1 { true } }
+        assert_passes    { AcceptsBlock.new.call2 { true } }
+        assert_passes    { AcceptsBlock.new.call1 { "foo" } }
+        assert_violation { AcceptsBlock.new.call1("foo") }
+        assert_violation { AcceptsBlock.new.call2("foo") }
+      end
+      
+      class AcceptsWriter
+        include Handshake
+        contract String => anything
+        def val=(str); @str = str; end
+      end
 
-  class ReturnsString
-    include Handshake
-    contract String => anything
-    def call(val); val; end
-  end
-  class ExtendsReturnsString < ReturnsString; end
-
-  def test_method_returns
-    assert_violation { ReturnsString.new.call(1) }
-    assert_violation { ReturnsString.new.call(true) }
-    assert_passes    { ReturnsString.new.call("foo") }
-    assert_violation { ExtendsReturnsString.new.call(1) }
-    assert_violation { ExtendsReturnsString.new.call(true) }
-    assert_passes    { ExtendsReturnsString.new.call("foo") }
-  end
-
-  class ReturnsMultiple
-    include Handshake
-    contract [ String, Integer ] => anything
-    def call(arg1, arg2); return arg1, arg2; end
-  end
-
-  def test_method_returns_multiple
-    assert_violation { ReturnsMultiple.new.call("foo", "foo") }
-    assert_violation { ReturnsMultiple.new.call(3, 3) }
-    assert_passes    { ReturnsMultiple.new.call("foo", 3) }
-  end
-
-  class AcceptsVarargs
-    include Handshake
-    contract [[ String ]] => anything
-    def initialize(*strs); @strs = strs; end
-  end
-
-  def test_method_accepts_varargs
-    assert_passes    { AcceptsVarargs.new }
-    assert_violation { AcceptsVarargs.new(1, 2, 3) }
-    assert_violation { AcceptsVarargs.new("foo", 1, 2) }
-    assert_violation { AcceptsVarargs.new(:foo, "foo") }
-    assert_passes    { AcceptsVarargs.new("foo") }
-    assert_passes    { AcceptsVarargs.new("foo1", "foo2") }
-  end
-
-  class AcceptsBlock
-    include Handshake
-    contract Block => anything
-    def call1; end
-    contract Block => anything
-    def call2(&block); end
-  end
-
-  def test_method_accepts_block
-    assert_violation { AcceptsBlock.new.call1 }
-    assert_violation { AcceptsBlock.new.call2 }
-    assert_passes    { AcceptsBlock.new.call1 { true } }
-    assert_passes    { AcceptsBlock.new.call2 { true } }
-    assert_passes    { AcceptsBlock.new.call1 { "foo" } }
-    assert_violation { AcceptsBlock.new.call1("foo") }
-    assert_violation { AcceptsBlock.new.call2("foo") }
-  end
-
-  class AcceptsWriter
-    include Handshake
-    contract String => anything
-    def val=(str); @str = str; end
-  end
-
-  def test_writer_method_accepts_str
-    assert_violation { AcceptsWriter.new.val = 3 }
-    assert_violation { AcceptsWriter.new.val = :foo }
-    assert_passes    { AcceptsWriter.new.val = "foo" }
+      should "check contracts for writer methods" do
+        assert_violation { AcceptsWriter.new.val = 3 }
+        assert_violation { AcceptsWriter.new.val = :foo }
+        assert_passes    { AcceptsWriter.new.val = "foo" }
+      end
+      
+    end
   end
 
   # EXCELSIOR!
