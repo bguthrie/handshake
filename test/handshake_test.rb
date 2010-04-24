@@ -5,7 +5,7 @@ require 'shoulda'
 
 # $DEBUG = true
 
-class TestContract < Test::Unit::TestCase
+class HandshakeTest < Test::Unit::TestCase
   context Handshake do
     context "invariant" do
       class InvariantDeclarations
