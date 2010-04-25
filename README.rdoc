@@ -1,12 +1,8 @@
 = Handshake
 
-Handshake is an informal design-by-contract system written in pure Ruby.
+Handshake is an informal AOP and design-by-contract system written in pure Ruby.
 It's intended to allow Ruby developers to apply simple, clear constraints
-to their methods and classes.  Handshake is written by Brian Guthrie
-(btguthrie@gmail.com) and lives at http://handshake.rubyforge.org.
-
-Contracts defined with Handshake are not enforced unless the global $DEBUG
-flag is set.
+to their methods and classes.
 
 === Features
 
@@ -17,15 +13,41 @@ flag is set.
 
 === Examples
 
-Here's an example of Handshake in action:
+Here's an example of Handshake in action on a hypothetical BankAccount class:
 
-  # An array that can never be empty.
+  class BankAccount
+    attr_reader :balance
+    
+    class << self
+      def less_than_balance?
+        all? positive_number?, clause {|n| n <= balance}
+      end
+    end
+    
+    invariant { balance >= 0 }
+    
+    contract positive_number? => anything
+    def initialize(balance)
+      @balance = balance
+    end
+    
+    contract less_than_balance? => positive_number?
+    def withdraw(amount)
+      new_balance = @balance - amount
+      @balance = new_balance
+      return new_balance
+    end
+  end
+  
+Here's an example that uses an invariant to enforce a constraint on a subclass of Array:
+
   class NonEmptyArray < Array
     include Handshake
     invariant { not empty? }
   end
   
-  # An array to which only strings may be added.
+Further specializing the subclass:
+
   class NonEmptyStringArray < NonEmptyArray
     contract :initialize, [[ String ]] => anything
     contract :<<, String => self
@@ -90,7 +112,7 @@ private method +checked_self+:
 
 === License (MIT)
 
-Copyright (c) 2007 Brian Guthrie
+Copyright (c) 2010 Brian Guthrie
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
