@@ -3,8 +3,6 @@ require 'test/unit'
 require 'handshake'
 require 'shoulda'
 
-# $DEBUG = true
-
 class HandshakeTest < Test::Unit::TestCase
   context Handshake do
     context "invariant" do

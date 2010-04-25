@@ -7,7 +7,7 @@ Rake::TestTask.new do |t|
 end
 
 Rcov::RcovTask.new do |t|
-  t.libs << "test"
+  t.rcov_opts = ["--text-summary", "--include-file lib/**/*", "--exclude gems,spec,version"]
   t.test_files = FileList['test/*_test.rb']
   t.verbose = true
 end
