@@ -18,5 +18,6 @@ Gem::Specification.new do |s|
   s.files = FileList['lib/**/*.rb', '[A-Z]*', 'test/**/*'].to_a
   s.test_files = FileList['test/**/*.rb']
 
+  s.add_development_dependency 'rake'
   s.add_development_dependency 'shoulda'
 end
