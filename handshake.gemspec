@@ -19,5 +19,5 @@ Gem::Specification.new do |s|
   s.test_files = FileList['test/**/*.rb']
 
   s.add_development_dependency 'rake'
-  s.add_development_dependency 'shoulda'
+  s.add_development_dependency 'rspec'
 end

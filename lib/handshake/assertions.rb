@@ -11,11 +11,3 @@ module Handshake
     end
  end
 end
-
-module Test # :nodoc:
-  module Unit # :nodoc:
-    module Assertions
-      include Handshake::Assertions
-    end
-  end
-end
