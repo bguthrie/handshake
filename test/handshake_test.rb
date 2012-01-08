@@ -1,9 +1,11 @@
 require 'rubygems'
-require 'test/unit'
-require 'handshake'
 require 'shoulda'
+require 'handshake'
+require 'handshake/assertions'
 
 class HandshakeTest < Test::Unit::TestCase
+  include Handshake::Assertions
+
   context Handshake do
     context "invariant" do
       class InvariantDeclarations
@@ -382,7 +384,7 @@ class HandshakeTest < Test::Unit::TestCase
         end
           
         def test_responds_to_each_first
-          assert_violation { AcceptsRespondsTo.new({}) }
+          assert_violation { AcceptsRespondsTo.new(Object.new) }
           assert_violation { AcceptsRespondsTo.new "foo" }
           assert_violation { AcceptsRespondsTo.new 3 }
           assert_passes    { AcceptsRespondsTo.new([]) }
@@ -393,7 +395,7 @@ class HandshakeTest < Test::Unit::TestCase
         class AcceptsIsA
           include Handshake
           contract is?(:String) => is?(:Symbol)
-          def call_is_a(str); return str.intern; end
+          def call_is_a(o); return o.to_s.to_sym; end
         end
           
         def test_accepts_is_string_symbol
@@ -418,7 +420,7 @@ class HandshakeTest < Test::Unit::TestCase
         assert_not_nil(SimpleBeforeCondition.method_contracts[:call_fails])
         assert_violation { SimpleBeforeCondition.new.call_fails }
         assert_passes    { SimpleBeforeCondition.new.call_passes }
-        assert_equal(1, ExtendsSimpleBeforeCondition.method_contracts.length)
+        assert_equal(2, ExtendsSimpleBeforeCondition.method_contracts.length)
         assert_not_nil(ExtendsSimpleBeforeCondition.method_contracts[:call_fails])
         assert_violation { ExtendsSimpleBeforeCondition.new.call_fails }
         assert_passes    { ExtendsSimpleBeforeCondition.new.call_passes }
@@ -458,7 +460,7 @@ class HandshakeTest < Test::Unit::TestCase
     context "after" do
       class SimpleAfterCondition
         include Handshake
-        after { |accepted, returned| assert returned }
+        after { |returned| assert returned }
         def call(bool); bool; end
       end
     
@@ -480,8 +482,12 @@ class HandshakeTest < Test::Unit::TestCase
       end
     
       def test_simple_around_condition
-        [ 1, :foo, true, false, "bar", 8.3, nil ].each do |val|
+        [ 1, :foo, true, "bar", 8.3 ].each do |val|
           assert_violation { SimpleAroundCondition.new.call(val) }
+        end
+
+        [ false, nil ].each do |val|
+          assert_passes { SimpleAroundCondition.new.call(val) }
         end
       end
     end
@@ -568,6 +574,8 @@ class HandshakeTest < Test::Unit::TestCase
     end
     
     context "suppress!" do
+      teardown { Handshake.enable! }
+
       class ComprehensiveContracts
         include Handshake
 

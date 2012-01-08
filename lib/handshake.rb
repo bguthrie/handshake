@@ -1,6 +1,9 @@
-Dir[File.join(File.dirname(__FILE__), 'handshake/**/*.rb')].sort.each { |lib| require lib }
+require 'handshake/block_contract'
+require 'handshake/clause_methods'
+require 'handshake/proxy_self'
+require 'handshake/version'
 
-require 'test/unit/assertions'
+require 'minitest/unit'
 
 # A module for defining class and method contracts (as in design-by-contract
 # programming).  To use it in your code, include this module in a class.
@@ -9,29 +12,54 @@ require 'test/unit/assertions'
 # There are three different types of contracts you can specify on a class.
 # See Handshake::ClassMethods for more documentation.
 module Handshake
+  include MiniTest::Assertions
 
-  # Catches any thrown :contract exception raised within the given block, 
-  # appends the given message to the violation message, and re-raises the 
-  # exception.
-  def Handshake.catch_contract(mesg=nil, &block) # :nodoc:
-    violation = catch(:contract, &block)
-    if violation.is_a?(Exception)
-      # Re-raise the violation with the given message, ensuring that the
-      # callback stack begins with the caller of this method rather than
-      # this method.
-      message = ( mesg.nil? ? "" : ( mesg + ": " ) ) + violation.message
-      raise violation.class, message, caller
+  # Checks the invariants defined on this class against +self+, raising a
+  # ContractViolation if any of them fail.
+  def check_invariants!
+    self.class.invariants.each do |invar|
+      unless invar.holds?(self)
+        mesg = invar.mesg || "Invariant check failed"
+        throw :contract, ContractViolation.new(self.class.to_s + " " + mesg)
+      end
     end
   end
-
-  # Suppress Handshake contract checking, for use in production code.
-  def Handshake.suppress!
-    @suppress_handshake = true
+  
+  # Returns the contract-checked proxy of self.
+  def checked_self
+    @checked_self || self
   end
 
-  def Handshake.suppressed?
-    @suppress_handshake = false unless defined?(@suppress_handshake)
-    @suppress_handshake
+  protected :checked_self
+
+  class << self
+    # Catches any thrown :contract exception raised within the given block, 
+    # appends the given message to the violation message, and re-raises the 
+    # exception.
+    def catch_contract(mesg=nil, &block) # :nodoc:
+      violation = catch(:contract, &block)
+      if violation.is_a?(Exception)
+        # Re-raise the violation with the given message, ensuring that the
+        # callback stack begins with the caller of this method rather than
+        # this method.
+        message = ( mesg.nil? ? "" : ( mesg + ": " ) ) + violation.message
+        raise violation.class, message, caller
+      end
+    end
+
+    def enable!
+      @suppress_handshake = false
+    end
+
+    # Suppress Handshake contract checking, for use in production code.
+    def suppress!
+      @suppress_handshake = true
+    end
+
+    def suppressed?
+      @suppress_handshake = false unless defined?(@suppress_handshake)
+      @suppress_handshake
+    end
   end
 
   # When Handshake is included in a class, that class's +new+ method is
@@ -44,17 +72,8 @@ module Handshake
   # to enforce contracts on methods called only internally, notably private
   # methods.
   def Handshake.included(base)
-    base.extend(ClassMethods)
-    base.extend(ClauseMethods)
-
-    base.send(:include, Test::Unit::Assertions)
-    base.send(:include, Handshake::InstanceMethods)
-
-    base.class_inheritable_array :invariants
-    base.write_inheritable_array :invariants, []
-
-    base.class_inheritable_hash :method_contracts
-    base.write_inheritable_hash :method_contracts, {}
+    base.extend(Handshake::ClassMethods)
+    base.extend(Handshake::ClauseMethods)
 
     class << base
       alias :__new__ :new
@@ -153,10 +172,25 @@ module Handshake
   # with test case execution.
   module ClassMethods
 
+    def invariants
+      @invariants ||= begin
+        if superclass.respond_to?(:invariants)
+          superclass.invariants.dup
+        else [] end
+      end
+    end
+
+    def method_contracts
+      @method_contracts ||= begin
+        if superclass.respond_to?(:method_contracts)
+          superclass.method_contracts.dup
+        else {} end
+      end
+    end
+
     # Specify an invariant, with a block and an optional error message.
     def invariant(mesg=nil, &block) # :yields:
-      write_inheritable_array(:invariants, [ Invariant.new(mesg, &block) ] )
-      nil
+      self.invariants << Invariant.new(mesg, &block)
     end
     alias :always :invariant
 
@@ -201,9 +235,9 @@ module Handshake
       if contract_defined?(method)
         method_contracts[method]
       else
-        contract = MethodContract.new("#{self}##{method}")
-        write_inheritable_hash :method_contracts, { method => contract }
-        contract
+        MethodContract.new("#{self}##{method}").tap do |contract|
+          self.method_contracts[method] = contract
+        end
       end
     end
 
@@ -260,7 +294,7 @@ module Handshake
     def define_contract(method, contract_hash)
       contract = contract_for(method).dup
       contract.signature = contract_hash
-      write_inheritable_hash :method_contracts, { method => contract }
+      self.method_contracts[method] = contract
     end
 
     def define_condition(method, type, condition)
@@ -269,7 +303,7 @@ module Handshake
       contract = contract_for(method).dup
       contract.preconditions << condition if defined_before
       contract.postconditions << condition if defined_after
-      write_inheritable_hash :method_contracts, { method => contract }
+      self.method_contracts[method] = contract
     end
 
     def condition(type, meth_or_mesg=nil, mesg=nil, &block)
@@ -289,25 +323,6 @@ module Handshake
 
   end
 
-  module InstanceMethods
-    # Checks the invariants defined on this class against +self+, raising a
-    # ContractViolation if any of them fail.
-    def check_invariants!
-      self.class.invariants.each do |invar|
-        unless invar.holds?(self)
-          mesg = invar.mesg || "Invariant check failed"
-          throw :contract, ContractViolation.new(self.class.to_s + " " + mesg)
-        end
-      end
-    end
-    
-    protected
-    # Returns the contract-checked proxy of self.
-    def checked_self
-      @checked_self || self
-    end
-  end
-
   # A ProcContract encapsulates knowledge about the signature of a method and
   # can check arrays of values against the signature through the
   # +check_equivalence!+ method.
@@ -323,7 +338,7 @@ module Handshake
     #   [ Clause, Clause ] => Clause
     def signature=(contract_hash)
       raise ArgumentError unless contract_hash.length == 1
-      sig_accepts, sig_returns = [ contract_hash.keys.first, contract_hash.values.first ].map {|v| arrayify v}
+      sig_accepts, sig_returns = [ contract_hash.keys.first, contract_hash.values.first ].map { |v| Array(v) }
       self.accepts = sig_accepts
       self.returns = sig_returns
     end
@@ -353,11 +368,6 @@ module Handshake
       given_args[index..-1].each {|arg| check_equivalence!(arg, expected)}
     end
 
-    def arrayify(value_or_array)
-      value_or_array.is_a?(Array) ? value_or_array : [ value_or_array ]
-    end
-
-    
     # Checks the given value against the expected value using === and throws
     # :contract if it fails.  This is a bit clunky.
     def check_equivalence!(given, expected)
@@ -422,7 +432,7 @@ module Handshake
         end
         begin
           o.bound_condition_passes?(*args)
-        rescue Test::Unit::AssertionFailedError => afe
+        rescue MiniTest::Assertion => afe
           throw :contract, AssertionFailed.new(afe.message)
         rescue Exception => e
           throw :contract, e
@@ -539,9 +549,9 @@ module Handshake
         return_val = @proxied.send(meth_name, *args, &block)
       end
          
-      Handshake.catch_contract("Contract violated by #{meth_string}") do
+      Handshake.catch_contract("Contract violated in return from #{meth_string}") do
         contract.check_returns! return_val
-        contract.check_post! @proxied, *(args << return_val)
+        contract.check_post! @proxied, return_val
         @proxied.check_invariants!
       end
 
@@ -554,20 +564,4 @@ module Handshake
   class ContractViolation < RuntimeError; end
   class AssertionFailed   < ContractViolation; end
   class ContractError     < RuntimeError; end
-end
-
-module Test # :nodoc:
-  module Unit # :nodoc:
-    module Assertions
-      # Asserts that the given block violates the contract by raising an
-      # instance of Handshake::ContractViolation.
-      def assert_violation(&block)
-        assert_raise(Handshake::ContractViolation, Handshake::AssertionFailed, &block)
-      end
-
-      def assert_passes(&block)
-        assert_nothing_raised(&block)
-      end
-    end
-  end
 end
