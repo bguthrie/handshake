@@ -1,20 +1,23 @@
-= Handshake
+# Handshake
 
-Handshake is an informal AOP and design-by-contract system written in pure Ruby.
+Handshake is an informal AOP and [design-by-contract][dbc] system written in pure Ruby.
 It's intended to allow Ruby developers to apply simple, clear constraints
 to their methods and classes.
 
-=== Features
+[dbc]: http://en.wikipedia.org/wiki/Design_by_contract
 
-* Method signature contracts
-* Contracts on blocks and procs
-* Method pre- and post-conditions
-* Class invariants
+### Features
 
-=== Examples
+  * Method signature contracts
+  * Contracts on blocks and procs
+  * Method pre- and post-conditions
+  * Class invariants
 
-Here's an example of Handshake in action on a hypothetical BankAccount class:
+### Examples
 
+Here's an example of Handshake in action on a hypothetical `BankAccount` class:
+
+```ruby
   class BankAccount
     attr_reader :balance
     
@@ -38,25 +41,31 @@ Here's an example of Handshake in action on a hypothetical BankAccount class:
       return new_balance
     end
   end
-  
+```
+
 Here's an example that uses an invariant to enforce a constraint on a subclass of Array:
 
+```ruby
   class NonEmptyArray < Array
     include Handshake
     invariant { not empty? }
   end
-  
+```
+
 Further specializing the subclass:
 
+```ruby
   class NonEmptyStringArray < NonEmptyArray
     contract :initialize, [[ String ]] => anything
     contract :<<, String => self
     contract :+, many?(String) => self
     contract :each, Block(String => anything) => self
   end
+```
 
 Handshake can also define pre- and post-conditions on your methods.
 
+```ruby
   class Foo
     before do
       assert( not @widget.nil? )
@@ -65,12 +74,13 @@ Handshake can also define pre- and post-conditions on your methods.
       ...
     end
   end
+```
 
-See Handshake::ClassMethods for more documentation on exact syntax and
-capabilities.  Handshake::ClauseMethods contains a number of helper and
+See `Handshake::ClassMethods` for more documentation on exact syntax and
+capabilities.  `Handshake::ClauseMethods` contains a number of helper and
 combinator clauses for defining contract signatures.
 
-=== Caveats
+### Caveats
 
 Handshake works by wrapping any class that includes it with a proxy object
 that performs the relevant contract checks.  It acts as a barrier between
@@ -78,6 +88,7 @@ an object and its callers.  Unfortunately, this means that internal calls,
 for example to private methods, that do not pass across this barrier, are
 unchecked.  Here's an example:
 
+```ruby
   class UncheckedCall
     include Handshake
 
@@ -92,16 +103,18 @@ unchecked.  Here's an example:
     contract String => Numeric
     def checked_private(str); str.to_i; end
   end
+```
 
 In this example, we have a public checked method protected by a contract.  Any
 external call to this method will be checked.  The method marked as
-checked_public_delegates calls a private method that is itself protected by a
+`checked_public_delegates` calls a private method that is itself protected by a
 contract.  But because the call to that private method is internal, and does not
 pass across the contract barrier, no contract will be applied.
 
 You can get around this problem by calling private methods on the special
-private method +checked_self+:
+private method `checked_self`:
 
+```ruby
   class UncheckedCall
     ...
     def checked_public_delegates(str)
@@ -109,8 +122,9 @@ private method +checked_self+:
     end
     ...
   end
+```
 
-=== License (MIT)
+### License (MIT)
 
 Copyright (c) 2010 Brian Guthrie
 
